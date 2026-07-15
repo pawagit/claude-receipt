@@ -1,0 +1,36 @@
+{
+  "name": "claude-receipt",
+  "version": "1.0.0",
+  "description": "Generate a Markdown + HTML receipt (tokens, models, cost) for a Claude Code session — works for VS Code extension and terminal sessions on Windows, macOS, and Linux.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "receipt",
+    "tokens",
+    "cost",
+    "usage",
+    "cli",
+    "anthropic"
+  ],
+  "homepage": "https://pawa.ch",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pawagit/claude-receipt.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pawagit/claude-receipt/issues"
+  },
+  "author": "pawa",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "claude-receipt": "bin/receipt.js"
+  },
+  "scripts": {
+    "start": "node bin/receipt.js",
+    "setup": "node scripts/install.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

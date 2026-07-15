@@ -1,0 +1,24 @@
+{
+  "_comment": "USD price per 1,000,000 tokens. Rates verified against Anthropic's published pricing as of `_ratesAsOf`; prices change over time — edit freely and update that date. Cache rates are derived from `input` via cacheMultipliers (Anthropic standard: read 0.1x, 5-min write 1.25x, 1-hour write 2x). Costs in the receipt are labelled 'estimated equivalent API cost'; on a Pro/Max subscription you don't pay per token.",
+  "_ratesAsOf": "2026-07-15",
+  "cacheMultipliers": {
+    "read": 0.1,
+    "write5m": 1.25,
+    "write1h": 2.0
+  },
+  "models": {
+    "claude-fable-5":    { "input": 10.0, "output": 50.0 },
+    "claude-mythos-5":   { "input": 10.0, "output": 50.0 },
+    "claude-opus-4-8":   { "input": 5.0,  "output": 25.0 },
+    "claude-opus-4-7":   { "input": 5.0,  "output": 25.0 },
+    "claude-opus-4-6":   { "input": 5.0,  "output": 25.0 },
+    "claude-opus-4-5":   { "input": 5.0,  "output": 25.0 },
+    "claude-opus-4-1":   { "input": 15.0, "output": 75.0 },
+    "claude-opus-4-0":   { "input": 15.0, "output": 75.0 },
+    "claude-sonnet-5":   { "input": 3.0,  "output": 15.0 },
+    "claude-sonnet-4-6": { "input": 3.0,  "output": 15.0 },
+    "claude-sonnet-4-5": { "input": 3.0,  "output": 15.0 },
+    "claude-sonnet-4-0": { "input": 3.0,  "output": 15.0 },
+    "claude-haiku-4-5":  { "input": 1.0,  "output": 5.0 }
+  }
+}
