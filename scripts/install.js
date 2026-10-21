@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Install (or remove) the two global Claude Code integrations for claude-receipt:
+// Install (or remove) the three global Claude Code integrations for claude-receipt:
 //   1. a SessionEnd hook in <config>/settings.json  → auto-receipt on session end
 //   2. a /receipt slash command in <config>/commands/receipt.md
+//   3. a /receipt-rebuild slash command in <config>/commands/receipt-rebuild.md
+//      → re-price the project's receipts after a price change
 //
 // The absolute path to this clone's bin/receipt.js is computed automatically, so
 // there is nothing to hand-edit. Re-running is safe (idempotent): the hook is
@@ -25,9 +27,11 @@ const receiptPath = resolve(here, '..', 'bin', 'receipt.js').replaceAll('\\', '/
 const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const settingsPath = join(configDir, 'settings.json');
 const commandPath = join(configDir, 'commands', 'receipt.md');
+const rebuildCommandPath = join(configDir, 'commands', 'receipt-rebuild.md');
 
 const hookCommand = `node "${receiptPath}" --hook`;
 const slashCommand = `node "${receiptPath}" --latest --open`;
+const rebuildSlashCommand = `node "${receiptPath}" --rebuild`;
 
 const hookEntry = {
   type: 'command',
@@ -44,6 +48,16 @@ allowed-tools: Bash(node:*)
 Ran the receipt generator for the current session (output below). Briefly tell me the total tokens and estimated cost, and where the files were written.
 
 !\`${slashCommand}\`
+`;
+
+const rebuildCommandFile = `---
+description: Re-price every receipt in this project's .claude-receipts folder (after a price change)
+allowed-tools: Bash(node:*)
+---
+
+Ran the receipt rebuild for this project's .claude-receipts folder (output below). Briefly tell me how many receipts were rebuilt, which were kept because their transcript is gone, and the total estimated cost before and after.
+
+!\`${rebuildSlashCommand}\`
 `;
 
 function readSettings() {
@@ -88,11 +102,13 @@ function install() {
 
   mkdirSync(dirname(commandPath), { recursive: true });
   writeFileSync(commandPath, commandFile, 'utf8');
+  writeFileSync(rebuildCommandPath, rebuildCommandFile, 'utf8');
 
   console.log('claude-receipt installed:');
-  console.log(`  hook          ${settingsPath}  (SessionEnd → ${updated ? 'updated' : 'added'})`);
-  console.log(`  /receipt      ${commandPath}`);
-  console.log(`  receipt.js    ${receiptPath}`);
+  console.log(`  hook              ${settingsPath}  (SessionEnd → ${updated ? 'updated' : 'added'})`);
+  console.log(`  /receipt          ${commandPath}`);
+  console.log(`  /receipt-rebuild  ${rebuildCommandPath}`);
+  console.log(`  receipt.js        ${receiptPath}`);
   console.log('\nApplies to NEW sessions — open /hooks once or restart to load the hook now.');
 }
 
@@ -114,9 +130,11 @@ function uninstall() {
     console.log(`No settings file at ${settingsPath} — nothing to remove.`);
   }
 
-  if (existsSync(commandPath)) {
-    rmSync(commandPath);
-    console.log(`Removed ${commandPath}`);
+  for (const path of [commandPath, rebuildCommandPath]) {
+    if (existsSync(path)) {
+      rmSync(path);
+      console.log(`Removed ${path}`);
+    }
   }
 }
 

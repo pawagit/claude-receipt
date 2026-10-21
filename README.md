@@ -132,11 +132,11 @@ function claude-receipt { node C:\path\to\claude-receipt\bin\receipt.js @args }
 
 ## Auto-generate on every session (installed globally)
 
-Two pieces wire receipts into your global `~/.claude/` config so they work in every
-new conversation. **The installer sets up both for you** (recommended):
+Three pieces wire receipts into your global `~/.claude/` config so they work in every
+new conversation. **The installer sets up all three for you** (recommended):
 
 ```bash
-npm run setup                        # add the hook + /receipt command
+npm run setup                        # add the hook + /receipt and /receipt-rebuild commands
 node scripts/install.js --uninstall  # remove them
 ```
 
@@ -170,6 +170,12 @@ running session.
 **2. On-demand — `/receipt` slash command** in `~/.claude/commands/receipt.md`:
 type `/receipt` in any conversation to generate the receipt for the current
 session and open the HTML.
+
+**3. Re-pricing — `/receipt-rebuild` slash command** in
+`~/.claude/commands/receipt-rebuild.md`: after you add or change a price in
+`models.json`, type `/receipt-rebuild` to regenerate every receipt in the
+`.claude-receipts` folder of the project the session is open in, at the new
+prices (it runs `--rebuild`). Works in the VS Code extension too.
 
 Manage or disable the hook anytime via `/hooks`.
 
