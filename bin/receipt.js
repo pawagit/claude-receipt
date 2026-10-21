@@ -32,7 +32,6 @@ function parseArgs(argv) {
     if (a === '--list') opts.list = true;
     else if (a === '--open') opts.open = true;
     else if (a === '--no-subagents') opts.subagents = false;
-    else if (a === '--latest') {} // default
     else if (a === '--session') opts.session = argv[++i];
     else if (a === '--project') opts.project = argv[++i];
     else if (a === '--file') opts.file = argv[++i];

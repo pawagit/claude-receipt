@@ -30,7 +30,7 @@ const commandPath = join(configDir, 'commands', 'receipt.md');
 const rebuildCommandPath = join(configDir, 'commands', 'receipt-rebuild.md');
 
 const hookCommand = `node "${receiptPath}" --hook`;
-const slashCommand = `node "${receiptPath}" --latest --open`;
+const slashCommand = `node "${receiptPath}" --open`;
 const rebuildSlashCommand = `node "${receiptPath}" --rebuild`;
 
 const hookEntry = {
