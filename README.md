@@ -96,6 +96,7 @@ node bin/receipt.js --open           # also open the HTML when done
 | `--no-subagents` | Exclude nested workflow/Task sub-agent token spend |
 | `--no-index` | Don't update the folder's `index.html` |
 | `--index [dir]` | Rebuild `index.html` for a receipts folder, then exit |
+| `--rebuild [dir]` | Regenerate every receipt in a receipts folder from its transcript (after a price change), keeping file names |
 | `--open` | Open the generated HTML |
 
 Output is written to the **session's own project folder**:
