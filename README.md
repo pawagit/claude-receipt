@@ -102,7 +102,8 @@ other sessions are running in parallel.
 | `--session <id>` | Receipt a specific session (full id, or a unique prefix such as the 8 characters in a receipt's file name) |
 | `--project <dir>` | Latest session whose recorded `cwd` matches `<dir>` |
 | `--file <path>` | Receipt a specific transcript `.jsonl` |
-| `--hook` | Read a Claude Code hook payload on stdin (what the `SessionEnd` hook runs) |
+| `--hook` | Read a Claude Code hook payload on stdin (what the `SessionEnd` hook runs); also catches up missed sessions like `--missing` |
+| `--missing [dir]` | Receipt the project's sessions that have no receipt yet: idle for over an hour, at least one billed response, Agent SDK runs skipped |
 | `--list` | List discoverable sessions (date · project · title · id) |
 | `--out <dir>` | Output directory (default: the session's own `<project>/.claude-receipts`) |
 | `--no-subagents` | Exclude nested workflow/Task sub-agent token spend |
@@ -181,9 +182,15 @@ forward slashes, e.g. `C:/tools/claude-receipt/...`):
 When any session ends (exit, `/clear`, logout) Claude Code pipes a JSON payload
 containing `transcript_path` to the command; `--hook` reads it and writes the
 receipt into **that session's own project folder** (`<project>/.claude-receipts/`),
-with a readable filename. It always exits 0, so it never disrupts session end.
-Applies to **new** sessions — open `/hooks` once or restart to load it into a
-running session.
+with a readable filename. It always exits 0, so it never disrupts session end;
+errors go to `~/.claude/claude-receipt.log` instead. Applies to **new** sessions —
+open `/hooks` once or restart to load it into a running session.
+
+A session whose window is closed or reloaded before it ends never fires
+`SessionEnd`. So each time the hook runs, it also receipts the project's other
+sessions that have none yet and have been idle for over an hour (`--missing` does
+the same by hand). Sessions run through the Agent SDK are skipped: they don't load
+your hooks, so they never get a receipt automatically.
 
 **2. On-demand — `/receipt` slash command** in `~/.claude/commands/receipt.md`:
 type `/receipt` in any conversation to generate the receipt for the current

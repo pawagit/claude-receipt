@@ -66,8 +66,9 @@ export function fakeClaude() {
     project,
     receipts: join(project, '.claude-receipts'),
     // Write a session transcript; `ageMin` sets how long ago it was last modified.
-    addSession(id, { title = id, records, ageMin = 0, entrypoint = 'cli', projectDir = 'proj', cwd = project } = {}) {
-      const file = join(config, 'projects', projectDir, `${id}.jsonl`);
+    // Like Claude Code, the transcript's folder is named after its cwd.
+    addSession(id, { title = id, records, ageMin = 0, entrypoint = 'cli', cwd = project } = {}) {
+      const file = join(config, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`);
       const body = records ?? [user('hi'), assistant({ usage: { input_tokens: 10, output_tokens: 100 } })];
       writeJsonl(file, [
         { type: 'ai-title', aiTitle: title, sessionId: id },

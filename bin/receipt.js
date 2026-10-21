@@ -8,6 +8,7 @@
 //   node bin/receipt.js --project <dir> # latest session whose cwd matches <dir>
 //   node bin/receipt.js --file <path>   # a specific transcript .jsonl
 //   node bin/receipt.js --hook          # read a hook payload on stdin (for SessionEnd)
+//   node bin/receipt.js --missing [dir] # receipt the project's ended sessions that have none
 //   node bin/receipt.js --list          # list available sessions
 //   node bin/receipt.js --out <dir>     # output directory (default: the session's own project)
 //   node bin/receipt.js --no-subagents  # exclude nested sub-agent token spend
@@ -18,12 +19,13 @@
 //   node bin/receipt.js --version       # print the version
 
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { join, resolve, basename } from 'node:path';
+import { join, resolve, basename, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseArgs as parseCli } from 'node:util';
 
+import { configDir } from '../src/config.js';
 import { listSessions, findLatest, findBySessionId, findSession, projectsRoot } from '../src/discover.js';
-import { parseSessionFile, findSubagentFiles } from '../src/parse.js';
+import { parseSessionFile, findSubagentFiles, peekEntrypoint } from '../src/parse.js';
 import { aggregate, extractMeta, mergeAggregates } from '../src/aggregate.js';
 import { buildView, renderMarkdown, renderHtml, fmtDateTime } from '../src/render.js';
 import { updateIndex, rebuildIndex, loadManifest, receiptDataScript, RECEIPT_FILE } from '../src/index-page.js';
@@ -43,13 +45,14 @@ const OPTIONS = {
   'no-index': { type: 'boolean' },
   index: { type: 'boolean' },
   rebuild: { type: 'boolean' },
+  missing: { type: 'boolean' },
   open: { type: 'boolean' },
   version: { type: 'boolean', short: 'v' },
   help: { type: 'boolean', short: 'h' },
 };
 
 // Strict: an unknown flag or a flag missing its value is an error, never a
-// silent fallback to some other session. Only --index/--rebuild take a [dir].
+// silent fallback to some other session. Only --index/--rebuild/--missing take a [dir].
 function parseArgs(argv) {
   let parsed;
   try {
@@ -59,7 +62,7 @@ function parseArgs(argv) {
     throw new UsageError(err.message.replace(/\. To specify a positional[\s\S]*/, ''));
   }
   const { values: v, positionals } = parsed;
-  const takesDir = v.index || v.rebuild;
+  const takesDir = v.index || v.rebuild || v.missing;
   if (positionals.length > (takesDir ? 1 : 0)) {
     throw new UsageError(`Unexpected argument "${positionals[takesDir ? 1 : 0]}"`);
   }
@@ -79,6 +82,7 @@ function parseArgs(argv) {
     noIndex: !!v['no-index'],
     index: !!v.index,
     rebuild: !!v.rebuild,
+    missing: !!v.missing,
     dir: positionals[0] ?? null,
     open: !!v.open,
     version: !!v.version,
@@ -95,7 +99,10 @@ function printHelp() {
   --session <id>       a specific session (full id or a unique prefix)
   --project <dir>      latest session whose cwd matches <dir>
   --file <path>        receipt a specific transcript .jsonl
-  --hook               read a Claude Code hook payload on stdin (for SessionEnd)
+  --hook               read a Claude Code hook payload on stdin (for SessionEnd);
+                       also catches up the project's missed sessions (--missing)
+  --missing [dir]      receipt the project's sessions that have no receipt yet
+                       (idle for an hour; Agent SDK runs skipped)
   --list               list available sessions
   --out <dir>          output directory (default: the session's own project)
   --no-subagents       exclude nested sub-agent token spend
@@ -103,7 +110,8 @@ function printHelp() {
   --index [dir]        rebuild index.html for a receipts folder, then exit
   --rebuild [dir]      regenerate every receipt in a receipts folder from its
                        transcript (e.g. after a price change), keeping file names
-                       [dir] defaults to the current session's .claude-receipts
+                       [dir]: a receipts folder; defaults to the current
+                       session's .claude-receipts, else ./.claude-receipts
   --open               open the generated HTML
   --version            print the version
   --help`);
@@ -157,10 +165,51 @@ function defaultReceiptsDir() {
   return join(cwd || process.cwd(), '.claude-receipts');
 }
 
+// Open in the default browser. A missing opener (no xdg-open over SSH or in
+// WSL) only costs the window — the receipt is written either way. On Windows the
+// path is quoted for cmd, so a folder like C:\R&D can't split the command.
 function openFile(path) {
-  const cmd = process.platform === 'win32' ? 'cmd' : process.platform === 'darwin' ? 'open' : 'xdg-open';
-  const args = process.platform === 'win32' ? ['/c', 'start', '', path] : [path];
-  spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+  const win = process.platform === 'win32';
+  const cmd = win ? 'cmd' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  const args = win ? ['/d', '/c', 'start', '""', `"${path}"`] : [path];
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: win });
+  child.on('error', (err) => console.error(`Couldn't open the receipt (${err.message}).`));
+  child.unref();
+}
+
+// Claude Code's folder name for a project under projects/: its path with every
+// character other than a letter or digit replaced by '-' (c:\work\app -> c--work-app).
+const projectDirNameOf = (cwd) => cwd.replace(/[^a-zA-Z0-9]/g, '-');
+
+const CATCH_UP_IDLE_MS = 60 * 60_000;
+
+// Receipt the sessions of one project that have none in `receiptsDir` yet:
+// ended ones (idle for an hour — a window closed before SessionEnd fired
+// leaves these behind) with at least one billed response. Agent SDK runs are
+// skipped: they don't load your hooks, so they never had a receipt to miss.
+function receiptMissing(receiptsDir, projectDirName, opts) {
+  const have = existsSync(receiptsDir) ? loadManifest(receiptsDir) : {};
+  const cutoff = Date.now() - CATCH_UP_IDLE_MS;
+  const written = [];
+  for (const s of listSessions()) {
+    if (s.projectDirName.toLowerCase() !== projectDirName.toLowerCase()) continue;
+    if (have[s.sessionId] || s.mtimeMs > cutoff) continue;
+    if (/^sdk/.test(peekEntrypoint(s.file) ?? '')) continue;
+    if (!aggregate(parseSessionFile(s.file).records).assistantResponses) continue;
+    written.push(writeReceipt(s, opts, { outDir: receiptsDir }));
+  }
+  return written;
+}
+
+// A hook has nowhere to show an error, so it goes to <config>/claude-receipt.log
+// (trimmed to its last ~100 KB): the place to look when a receipt is missing.
+function logHookError(err) {
+  try {
+    mkdirSync(configDir(), { recursive: true });
+    const file = join(configDir(), 'claude-receipt.log');
+    const text = (existsSync(file) ? readFileSync(file, 'utf8') : '') + `${new Date().toISOString()} ${err?.stack || err}\n`;
+    writeFileSync(file, text.length > 100_000 ? text.slice(text.indexOf('\n', text.length - 80_000) + 1) : text);
+  } catch {}
 }
 
 const fmtCost = (n) => '$' + ((n || 0) >= 1 ? (n || 0).toFixed(2) : (n || 0).toFixed(4));
@@ -295,6 +344,16 @@ function main() {
     return;
   }
 
+  if (opts.missing) {
+    const dir = resolve(opts.dir || defaultReceiptsDir());
+    const current = !opts.dir && process.env.CLAUDE_CODE_SESSION_ID && findBySessionId(process.env.CLAUDE_CODE_SESSION_ID);
+    const projectDirName = current ? current.projectDirName : projectDirNameOf(dirname(dir));
+    const written = receiptMissing(dir, projectDirName, { ...opts, noIndex: false });
+    for (const r of written) console.log(`  receipted  ${basename(r.htmlPath)}  ${fmtCost(r.view.totalCost)}`);
+    console.log(`Receipted ${written.length} session(s) that had none: ${join(dir, 'index.html')}`);
+    return;
+  }
+
   if (opts.list) {
     const sessions = listSessions();
     if (!sessions.length) return console.log(`No sessions found under ${projectsRoot()}.`);
@@ -314,6 +373,13 @@ function main() {
 
   if (opts.hook) {
     console.log(`claude-receipt: ${meta.title} → ${htmlPath}`);
+    // Also catch up this project's sessions whose SessionEnd never fired.
+    try {
+      const caughtUp = receiptMissing(dirname(htmlPath), basename(dirname(session.file)), opts);
+      for (const r of caughtUp) console.log(`claude-receipt: caught up ${r.meta.title} → ${r.htmlPath}`);
+    } catch (err) {
+      logHookError(err);
+    }
   } else {
     console.log(`Receipt for: ${meta.title}  [${session.sessionId.slice(0, 8)}]`);
     console.log(`  ${view.totalTokens.toLocaleString('en-US')} tokens · est. ${fmtCost(view.totalCost)}`);
@@ -328,7 +394,10 @@ function main() {
 try {
   main();
 } catch (err) {
-  if (process.argv.includes('--hook')) process.exit(0); // never disrupt session end
+  if (process.argv.includes('--hook')) {
+    logHookError(err);
+    process.exit(0); // never disrupt session end
+  }
   console.error(`Error: ${err.message}`);
   if (err instanceof UsageError) {
     console.error('Run with --help to see the options.');
