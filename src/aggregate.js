@@ -5,10 +5,21 @@
 // `usage` object. Summing raw rows multiplies the token count. We therefore
 // dedupe usage by message.id (falling back to requestId) and count it once.
 
-const SYNTHETIC = (m) => !m || m.startsWith('<'); // '<synthetic>', etc. — not billable
+import { tierFor } from './pricing.js';
 
-function emptyModelBucket() {
+const SYNTHETIC = (m) => !m || m.startsWith('<'); // '<synthetic>', etc. — not billable
+const TIER_LABELS = { fast: 'fast', long: 'long context' };
+
+// One bucket per model and price tier: fast-mode and long-context responses
+// cost more, so they get their own line (`claude-opus-5-5 · fast`).
+function bucketKey(model, tier) {
+  return tier ? `${model} · ${TIER_LABELS[tier]}` : model;
+}
+
+function emptyModelBucket(model, tier) {
   return {
+    model,
+    tier,
     responses: 0,
     input: 0,
     output: 0,
@@ -68,7 +79,8 @@ export function aggregate(records) {
     if (SYNTHETIC(model) || !msg.usage) continue;
 
     const u = msg.usage;
-    const bucket = (models[model] ??= emptyModelBucket());
+    const tier = tierFor(model, u);
+    const bucket = (models[bucketKey(model, tier)] ??= emptyModelBucket(model, tier));
     bucket.responses++;
     bucket.input += u.input_tokens || 0;
     bucket.output += u.output_tokens || 0;
@@ -148,8 +160,8 @@ export function mergeAggregates(parts) {
       merged.firstTs = merged.firstTs === null ? p.firstTs : Math.min(merged.firstTs, p.firstTs);
     if (p.lastTs !== null)
       merged.lastTs = merged.lastTs === null ? p.lastTs : Math.max(merged.lastTs, p.lastTs);
-    for (const [model, b] of Object.entries(p.models)) {
-      const t = (merged.models[model] ??= emptyModelBucket());
+    for (const [key, b] of Object.entries(p.models)) {
+      const t = (merged.models[key] ??= emptyModelBucket(b.model ?? key, b.tier ?? ''));
       t.responses += b.responses;
       t.input += b.input;
       t.output += b.output;

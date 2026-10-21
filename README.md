@@ -186,8 +186,16 @@ Manage or disable the hook anytime via `/hooks`.
 
 - Cost is computed from a bundled price table ([models.json](models.json)) — the transcript
   stores token counts only, never cost. Prices change over time; edit `models.json` freely.
+- A model id is priced only when `models.json` has its row (exactly, or after dropping a date
+  suffix such as `-20251001`). A new model shows `n/a` and the total says it excludes models with
+  no price: add its row, then run `--rebuild <project>/.claude-receipts` to re-price the receipts
+  already written.
 - Cache pricing uses the standard multipliers (read 0.1×, 5-min write 1.25×, 1-hour write 2×),
-  using the 5m/1h split from `usage.cache_creation` when present.
+  using the 5m/1h split from `usage.cache_creation` when present. A model row can override them
+  (`cacheMultipliers`: Opus 5.5 reads at 0.05×, Fable 5.1 at 0.025×).
+- Fast-mode responses (`usage.speed: "fast"`) are priced from the row's `fast` rates, and responses
+  whose prompt exceeds a `longContext.above` threshold (Haiku 5.5: 100K) from its `longContext`
+  rates; each gets its own line item (`claude-opus-5-5 · fast`).
 - On a **Pro/Max subscription you don't pay per token** — the figure is labelled
   *estimated equivalent API cost*, i.e. what it would cost on the API.
 - Receipting a **live** session is fine: a half-written final line is skipped (and reported).
