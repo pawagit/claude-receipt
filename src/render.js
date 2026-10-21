@@ -1,10 +1,13 @@
 // Building the receipt view-model and rendering it to Markdown + HTML.
 
 import { costFor } from './pricing.js';
+import { activeTime } from './aggregate.js';
 import { renderQrSvg, Ecc } from './qrcode.js';
+import { truncate } from './text.js';
 
 const fmtInt = (n) => Math.round(n).toLocaleString('en-US');
 const fmtMoney = (n) => '$' + (n >= 1 ? n.toFixed(2) : n.toFixed(4));
+const mdCell = (s) => String(s).replace(/\|/g, '\\|'); // a `|` would end the table cell
 
 // --- Claude Code brand logo -------------------------------------------------
 // The official Claude Code mark (assets/claudecode-color.svg): a clay-coloured robot
@@ -30,8 +33,7 @@ const BRAND_ICON_ASCII = [
 function buildQrPayload(v) {
   const m = v.meta;
   const lines = ['CLAUDE CODE · RECEIPT'];
-  const title = m.title.length > 60 ? m.title.slice(0, 59) + '…' : m.title;
-  lines.push(title);
+  lines.push(truncate(m.title, 60));
   if (m.project) lines.push(m.project + (m.gitBranch ? ' · ' + m.gitBranch : ''));
   if (m.version) lines.push('CC ' + m.version);
   lines.push(`${fmtDateTime(v.startedAt)} · ${fmtDuration(v.durationMs)}`);
@@ -51,6 +53,14 @@ function fmtDuration(ms) {
   if (h) return `${h}h ${m}m`;
   if (m) return `${m}m ${sec}s`;
   return `${sec}s`;
+}
+
+// Active time, plus wall time when idle pauses make the two differ a lot.
+function fmtDurationLine(v) {
+  const active = fmtDuration(v.durationMs);
+  return v.wallMs > 1.5 * v.durationMs && v.wallMs - v.durationMs >= 60_000
+    ? `${active} active (wall ${fmtDuration(v.wallMs)})`
+    : active;
 }
 
 function fmtDateTime(ms) {
@@ -89,6 +99,7 @@ export function buildView(meta, agg, { subagent } = {}) {
     });
   }
   models.sort((a, b) => b.tokens - a.tokens);
+  const { activeMs, wallMs } = activeTime(agg.timestamps ?? []);
 
   return {
     meta,
@@ -101,7 +112,8 @@ export function buildView(meta, agg, { subagent } = {}) {
     toolCalls: agg.toolCalls,
     userPrompts: agg.userPrompts,
     assistantResponses: agg.assistantResponses,
-    durationMs: agg.firstTs != null && agg.lastTs != null ? agg.lastTs - agg.firstTs : null,
+    durationMs: activeMs, // active time; idle pauses over 30 min are left out
+    wallMs,
     startedAt: agg.firstTs,
     endedAt: agg.lastTs,
     subagent: subagent || null, // optional rolled-up sub-agent line
@@ -121,10 +133,10 @@ export function renderMarkdown(v) {
   L.push('');
   L.push(`| | |`);
   L.push(`|---|---|`);
-  if (m.project) L.push(`| **Project** | ${m.project}${m.gitBranch ? ` (${m.gitBranch})` : ''} |`);
-  if (m.version) L.push(`| **CC version** | ${m.version} |`);
+  if (m.project) L.push(`| **Project** | ${mdCell(m.project)}${m.gitBranch ? ` (${mdCell(m.gitBranch)})` : ''} |`);
+  if (m.version) L.push(`| **CC version** | ${mdCell(m.version)} |`);
   L.push(`| **Started** | ${fmtDateTime(v.startedAt)} |`);
-  L.push(`| **Duration** | ${fmtDuration(v.durationMs)} |`);
+  L.push(`| **Duration** | ${fmtDurationLine(v)} |`);
   L.push(`| **Prompts · Turns · Tools** | ${v.userPrompts} · ${v.assistantResponses} · ${v.toolCalls} |`);
   if (v.webSearch || v.webFetch) L.push(`| **Web search · fetch** | ${v.webSearch} · ${v.webFetch} |`);
   L.push('');
@@ -134,7 +146,7 @@ export function renderMarkdown(v) {
   L.push('|---|--:|--:|--:|--:|--:|');
   for (const md of v.models) {
     L.push(
-      `| \`${md.name}\` | ${fmtInt(md.input)} | ${fmtInt(md.output)} | ${fmtInt(md.cacheWrite)} | ${fmtInt(md.cacheRead)} | ${md.cost.known ? fmtMoney(md.cost.total) : 'n/a'} |`,
+      `| \`${mdCell(md.name)}\` | ${fmtInt(md.input)} | ${fmtInt(md.output)} | ${fmtInt(md.cacheWrite)} | ${fmtInt(md.cacheRead)} | ${md.cost.known ? fmtMoney(md.cost.total) : 'n/a'} |`,
     );
   }
   L.push('');
@@ -217,7 +229,7 @@ export function renderHtml(v) {
       ${m.project ? `<div class="line"><span>Project</span><span>${esc(m.project)}${m.gitBranch ? ' · ' + esc(m.gitBranch) : ''}</span></div>` : ''}
       ${m.version ? `<div class="line"><span>CC version</span><span>${esc(m.version)}</span></div>` : ''}
       <div class="line"><span>Date</span><span>${fmtDateTime(v.startedAt)}</span></div>
-      <div class="line"><span>Duration</span><span>${fmtDuration(v.durationMs)}</span></div>
+      <div class="line"><span>Duration</span><span>${fmtDurationLine(v)}</span></div>
       <div class="line"><span>Prompts · Turns · Tools</span><span>${v.userPrompts} · ${v.assistantResponses} · ${v.toolCalls}</span></div>
       ${v.webSearch || v.webFetch ? `<div class="line"><span>Web search · fetch</span><span>${v.webSearch} · ${v.webFetch}</span></div>` : ''}
     </div>

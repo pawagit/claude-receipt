@@ -114,6 +114,17 @@ function receiptBasename(meta, view, sessionId) {
   return `${date}_${slug}_${sessionId.slice(0, 8)}`;
 }
 
+// A receipt's file name as index.json records it: a plain name, never a path,
+// so an edited index.json can't make us write outside the folder.
+const RECEIPT_FILE = /^[\w.-]+\.html$/;
+
+// The file name this session's receipt already has in `dir`, if any — so a
+// session renamed later keeps (and overwrites) its files instead of orphaning them.
+function existingBase(dir, sessionId) {
+  const file = loadManifest(dir)[sessionId]?.htmlFile;
+  return RECEIPT_FILE.test(file ?? '') ? file.replace(/\.html$/, '') : null;
+}
+
 // Build one session's receipt and write it (plus its index entry). `outDir` and
 // `base` override the session's own folder and the title-based file name.
 function writeReceipt(session, opts, { outDir, base } = {}) {
@@ -146,7 +157,7 @@ function writeReceipt(session, opts, { outDir, base } = {}) {
     ? resolve(opts.out)
     : join(meta.cwd || process.cwd(), '.claude-receipts');
   mkdirSync(outDir, { recursive: true });
-  base ??= receiptBasename(meta, view, session.sessionId);
+  base ??= existingBase(outDir, session.sessionId) ?? receiptBasename(meta, view, session.sessionId);
   const mdPath = join(outDir, `${base}.md`);
   const htmlPath = join(outDir, `${base}.html`);
   writeFileSync(mdPath, md, 'utf8');
@@ -169,10 +180,6 @@ function writeReceipt(session, opts, { outDir, base } = {}) {
 
   return { meta, view, parseErrors, mdPath, htmlPath };
 }
-
-// A receipt's file name as index.json records it: a plain name, never a path,
-// so an edited index.json can't make --rebuild write outside the folder.
-const RECEIPT_FILE = /^[\w.-]+\.html$/;
 
 // Regenerate every receipt listed in a folder's index.json, in place. Sessions
 // whose transcript is gone (Claude Code prunes old ones) keep their receipt.

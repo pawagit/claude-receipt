@@ -8,8 +8,13 @@
 // (stop_reason null, a handful of output tokens) before the final row.
 
 import { tierFor } from './pricing.js';
+import { truncate } from './text.js';
 
 const SYNTHETIC = (m) => !m || m.startsWith('<'); // '<synthetic>', etc. — not billable
+// User-role records that no person typed: background-task notices, `!` shell
+// commands, local command output, and interrupt markers.
+const NOT_TYPED = /^\s*(<task-notification>|<bash-|<local-command-|Caveat:|\[Request interrupted)/;
+const IDLE_GAP_MS = 30 * 60_000; // a longer pause between records isn't active time
 const TIER_LABELS = { fast: 'fast', long: 'long context' };
 
 // One bucket per model and price tier: fast-mode and long-context responses
@@ -38,8 +43,10 @@ export function aggregate(records) {
   const models = {};
   const responses = new Map(); // message.id|requestId -> { model, usage } of its final row
   const seenToolUseIds = new Set(); // tool_use block id -> dedupe tool calls
+  const timestamps = [];
   let toolCalls = 0;
   let userPrompts = 0;
+  let pendingPrompts = 0; // typed prompts not yet answered by a billed response
   let firstTs = null;
   let lastTs = null;
 
@@ -47,13 +54,14 @@ export function aggregate(records) {
     if (rec.timestamp) {
       const t = Date.parse(rec.timestamp);
       if (!Number.isNaN(t)) {
+        timestamps.push(t);
         if (firstTs === null || t < firstTs) firstTs = t;
         if (lastTs === null || t > lastTs) lastTs = t;
       }
     }
 
     if (rec.type === 'user') {
-      if (isHumanPrompt(rec.message)) userPrompts++;
+      if (isTypedPrompt(rec)) pendingPrompts++;
       continue;
     }
 
@@ -77,6 +85,9 @@ export function aggregate(records) {
     // Usage: one entry per API response (synthetic/system rows aren't billed),
     // keeping the row with the most output tokens; ties go to the later row.
     if (SYNTHETIC(model) || !msg.usage) continue;
+    // A prompt counts once Claude answers it (`/exit`, `/model` etc. get no answer).
+    userPrompts += pendingPrompts;
+    pendingPrompts = 0;
     const key = msg.id || rec.requestId ? `${msg.id || ''}|${rec.requestId || ''}` : rec.uuid;
     const prev = responses.get(key);
     if (!prev || (msg.usage.output_tokens || 0) >= (prev.usage.output_tokens || 0)) {
@@ -115,28 +126,43 @@ export function aggregate(records) {
     assistantResponses: responses.size,
     firstTs,
     lastTs,
+    timestamps,
   };
 }
 
+// Active time from record timestamps: the sum of the gaps between consecutive
+// records, skipping pauses longer than IDLE_GAP_MS (a session left open
+// overnight isn't 14 hours of work). Wall time is first to last record.
+export function activeTime(timestamps) {
+  const ts = [...timestamps].sort((a, b) => a - b);
+  let activeMs = 0;
+  for (let i = 1; i < ts.length; i++) {
+    const gap = ts[i] - ts[i - 1];
+    if (gap <= IDLE_GAP_MS) activeMs += gap;
+  }
+  return { activeMs, wallMs: ts.length ? ts[ts.length - 1] - ts[0] : 0 };
+}
+
 // Session metadata (title, project, branch, version) pulled from the records.
+// Title: a name set with /rename, else Claude Code's AI title, else the last prompt.
 export function extractMeta(records, sessionId) {
-  let title = null;
+  let customTitle = null;
+  let aiTitle = null;
   let lastPrompt = null;
   let cwd = null;
   let gitBranch = null;
   let version = null;
 
   for (const rec of records) {
-    if (rec.type === 'ai-title' && rec.aiTitle) title = rec.aiTitle;
+    if (rec.type === 'custom-title' && rec.customTitle) customTitle = rec.customTitle;
+    if (rec.type === 'ai-title' && rec.aiTitle) aiTitle = rec.aiTitle;
     if (rec.type === 'last-prompt' && rec.lastPrompt) lastPrompt = rec.lastPrompt;
     if (cwd === null && rec.cwd) cwd = rec.cwd;
     if (gitBranch === null && rec.gitBranch) gitBranch = rec.gitBranch;
     if (version === null && rec.version) version = rec.version;
   }
 
-  if (!title && lastPrompt) {
-    title = lastPrompt.length > 60 ? lastPrompt.slice(0, 57) + '…' : lastPrompt;
-  }
+  const title = customTitle || aiTitle || (lastPrompt && truncate(lastPrompt.replace(/\s+/g, ' ').trim(), 60));
 
   return {
     sessionId,
@@ -157,11 +183,13 @@ export function mergeAggregates(parts) {
     assistantResponses: 0,
     firstTs: null,
     lastTs: null,
+    timestamps: [],
   };
   for (const p of parts) {
     merged.toolCalls += p.toolCalls;
     merged.userPrompts += p.userPrompts;
     merged.assistantResponses += p.assistantResponses;
+    merged.timestamps.push(...(p.timestamps ?? []));
     if (p.firstTs !== null)
       merged.firstTs = merged.firstTs === null ? p.firstTs : Math.min(merged.firstTs, p.firstTs);
     if (p.lastTs !== null)
@@ -185,14 +213,18 @@ function asArray(content) {
   return Array.isArray(content) ? content : [];
 }
 
-function isHumanPrompt(message) {
-  if (!message) return false;
-  const c = message.content;
-  if (typeof c === 'string') return c.trim().length > 0;
-  if (!Array.isArray(c)) return false;
-  const hasText = c.some((b) => b && b.type === 'text');
-  const hasToolResult = c.some((b) => b && b.type === 'tool_result');
-  return hasText && !hasToolResult;
+// A prompt a person typed (a slash command like `/review` included). Not tool
+// results, not Claude Code's own injected (isMeta) messages or compaction
+// summaries, and not a sub-agent's task prompt (sidechain records).
+function isTypedPrompt(rec) {
+  if (rec.isMeta || rec.isCompactSummary || rec.isSidechain) return false;
+  const c = rec.message?.content;
+  let text;
+  if (typeof c === 'string') text = c;
+  else if (Array.isArray(c) && !c.some((b) => b && b.type === 'tool_result')) {
+    text = c.filter((b) => b && b.type === 'text').map((b) => b.text).join('\n');
+  }
+  return !!text && text.trim().length > 0 && !NOT_TYPED.test(text);
 }
 
 function basename(p) {

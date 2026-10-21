@@ -109,8 +109,9 @@ function appendBits(val, len, bb) {
 }
 
 function utf8Bytes(str) {
-  // Encode the string as UTF-8 bytes without relying on Buffer/TextEncoder.
-  return Array.from(unescape(encodeURIComponent(str)), (ch) => ch.charCodeAt(0));
+  // TextEncoder never throws: a lone surrogate becomes U+FFFD, where
+  // encodeURIComponent would raise a URIError and sink the whole receipt.
+  return Array.from(new TextEncoder().encode(str));
 }
 
 // --- Public: encode text into a QR module matrix ---------------------------
