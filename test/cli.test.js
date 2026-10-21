@@ -67,3 +67,14 @@ test("--rebuild without a dir rebuilds the current session's folder, wherever th
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Rebuilt 1 of 1 receipt/);
 });
+
+test('--rebuild --all rebuilds every project folder', () => {
+  const c = fakeClaude();
+  c.addSession(A, { title: 'Here' });
+  c.addSession(B, { title: 'Elsewhere', cwd: c.root });
+  for (const id of [A, B]) assert.equal(runCli(['--session', id], { config: c.config }).status, 0);
+  const r = runCli(['--rebuild', '--all'], { config: c.config });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Rebuilt 2 of 2 receipt\(s\) in 2 folder\(s\)/);
+  assert.equal(runCli(['--all'], { config: c.config }).status, 2);
+});

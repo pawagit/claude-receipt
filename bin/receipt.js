@@ -15,6 +15,7 @@
 //   node bin/receipt.js --no-index      # don't update the folder index.html
 //   node bin/receipt.js --index [dir]   # rebuild a folder's index.html, then exit
 //   node bin/receipt.js --rebuild [dir] # regenerate every receipt in a folder (new prices)
+//   node bin/receipt.js --rebuild --all # ... in every project's receipts folder
 //   node bin/receipt.js --open          # open the HTML when done
 //   node bin/receipt.js --version       # print the version
 
@@ -25,7 +26,7 @@ import { parseArgs as parseCli } from 'node:util';
 
 import { configDir } from '../src/config.js';
 import { listSessions, findLatest, findBySessionId, findSession, projectsRoot } from '../src/discover.js';
-import { parseSessionFile, findSubagentFiles, peekEntrypoint } from '../src/parse.js';
+import { parseSessionFile, findSubagentFiles, peekField } from '../src/parse.js';
 import { aggregate, extractMeta, mergeAggregates } from '../src/aggregate.js';
 import { buildView, renderMarkdown, renderHtml, fmtDateTime } from '../src/render.js';
 import { updateIndex, rebuildIndex, loadManifest, receiptDataScript, RECEIPT_FILE } from '../src/index-page.js';
@@ -45,6 +46,7 @@ const OPTIONS = {
   'no-index': { type: 'boolean' },
   index: { type: 'boolean' },
   rebuild: { type: 'boolean' },
+  all: { type: 'boolean' },
   missing: { type: 'boolean' },
   open: { type: 'boolean' },
   version: { type: 'boolean', short: 'v' },
@@ -66,6 +68,7 @@ function parseArgs(argv) {
   if (positionals.length > (takesDir ? 1 : 0)) {
     throw new UsageError(`Unexpected argument "${positionals[takesDir ? 1 : 0]}"`);
   }
+  if (v.all && (!v.rebuild || positionals.length)) throw new UsageError('--all goes with --rebuild, without a [dir]');
   const selectors = ['file', 'session', 'project', 'latest'].filter((k) => v[k] !== undefined);
   if (selectors.length > 1) {
     throw new UsageError(`Pick one session: ${selectors.map((k) => `--${k}`).join(', ')} can't be combined`);
@@ -82,6 +85,7 @@ function parseArgs(argv) {
     noIndex: !!v['no-index'],
     index: !!v.index,
     rebuild: !!v.rebuild,
+    all: !!v.all,
     missing: !!v.missing,
     dir: positionals[0] ?? null,
     open: !!v.open,
@@ -112,6 +116,7 @@ function printHelp() {
                        transcript (e.g. after a price change), keeping file names
                        [dir]: a receipts folder; defaults to the current
                        session's .claude-receipts, else ./.claude-receipts
+  --rebuild --all      the same for every project's receipts folder
   --open               open the generated HTML
   --version            print the version
   --help`);
@@ -161,8 +166,22 @@ function pickSession(opts) {
 // on ./.claude-receipts.
 function defaultReceiptsDir() {
   const current = process.env.CLAUDE_CODE_SESSION_ID && findBySessionId(process.env.CLAUDE_CODE_SESSION_ID);
-  const cwd = current && parseSessionFile(current.file).records.find((r) => r.cwd)?.cwd;
+  const cwd = current && peekField(current.file, 'cwd');
   return join(cwd || process.cwd(), '.claude-receipts');
+}
+
+// Every project's receipts folder on this machine: <cwd>/.claude-receipts of
+// each project with transcripts, where an index.json exists.
+function allReceiptsDirs() {
+  const dirs = new Map(); // case-folded on Windows, where C:\x and c:\x are one folder
+  for (const s of listSessions()) {
+    const cwd = peekField(s.file, 'cwd');
+    if (!cwd) continue;
+    const dir = join(cwd, '.claude-receipts');
+    const key = process.platform === 'win32' ? dir.toLowerCase() : dir;
+    if (!dirs.has(key) && existsSync(join(dir, 'index.json'))) dirs.set(key, dir);
+  }
+  return [...dirs.values()];
 }
 
 // Open in the default browser. A missing opener (no xdg-open over SSH or in
@@ -194,7 +213,7 @@ function receiptMissing(receiptsDir, projectDirName, opts) {
   for (const s of listSessions()) {
     if (s.projectDirName.toLowerCase() !== projectDirName.toLowerCase()) continue;
     if (have[s.sessionId] || s.mtimeMs > cutoff) continue;
-    if (/^sdk/.test(peekEntrypoint(s.file) ?? '')) continue;
+    if (/^sdk/.test(peekField(s.file, 'entrypoint') ?? '')) continue;
     if (!aggregate(parseSessionFile(s.file).records).assistantResponses) continue;
     written.push(writeReceipt(s, opts, { outDir: receiptsDir }));
   }
@@ -333,6 +352,20 @@ function main() {
     if (!existsSync(dir)) throw new Error(`No receipts folder at ${dir}`);
     const n = rebuildIndex(dir);
     console.log(`Rebuilt index for ${n} receipt(s): ${join(dir, 'index.html')}`);
+    return;
+  }
+
+  if (opts.rebuild && opts.all) {
+    let rebuilt = 0;
+    let total = 0;
+    const dirs = allReceiptsDirs();
+    for (const dir of dirs) {
+      console.log(dir);
+      const r = rebuildReceipts(dir, { ...opts, noIndex: false });
+      rebuilt += r.rebuilt;
+      total += r.total;
+    }
+    console.log(`Rebuilt ${rebuilt} of ${total} receipt(s) in ${dirs.length} folder(s).`);
     return;
   }
 

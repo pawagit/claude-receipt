@@ -20,9 +20,10 @@ export function parseSessionFile(file) {
   return { records, parseErrors };
 }
 
-// How a session was started ('cli', 'claude-vscode', 'sdk-py', …), read from
-// the first 64 KB only, so checking many sessions stays cheap. Null if unknown.
-export function peekEntrypoint(file) {
+// The first value of a record field such as `cwd` or `entrypoint` ('cli',
+// 'claude-vscode', 'sdk-py', …), read from the first 64 KB only, so checking
+// many sessions stays cheap. Null if not found there.
+export function peekField(file, key) {
   const fd = openSync(file, 'r');
   try {
     const buf = Buffer.alloc(64 * 1024);
@@ -30,7 +31,7 @@ export function peekEntrypoint(file) {
     for (const line of buf.toString('utf8', 0, n).split('\n')) {
       try {
         const rec = JSON.parse(line);
-        if (rec.entrypoint) return rec.entrypoint;
+        if (rec[key]) return rec[key];
       } catch {}
     }
     return null;

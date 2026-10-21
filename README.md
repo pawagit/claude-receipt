@@ -72,8 +72,8 @@ npm run setup          # or: node scripts/install.js
 It adds a `SessionEnd` hook and the `/receipt` and `/receipt-rebuild` commands to
 your global `~/.claude/` config, filling in this clone's absolute path for you — no
 manual path editing.
-It merges into any existing `settings.json` (writing a `.bak` first), is safe to
-re-run, and undoes cleanly with `node scripts/install.js --uninstall`. Open
+It merges into any existing `settings.json` (keeping the original as
+`settings.json.bak`), is safe to re-run, and undoes cleanly with `node scripts/install.js --uninstall`. Open
 `/hooks` once (or restart) to load the hook into a running session. See
 **Auto-generate on every session** for exactly what it configures, or to set it
 up by hand.
@@ -110,6 +110,7 @@ other sessions are running in parallel.
 | `--no-index` | Don't update the folder's `index.html` |
 | `--index [dir]` | Rebuild `index.html` for a receipts folder, then exit |
 | `--rebuild [dir]` | Regenerate every receipt in a receipts folder from its transcript (after a price change), keeping file names |
+| `--rebuild --all` | The same for every project's `.claude-receipts` folder on this machine |
 | `--open` | Open the generated HTML |
 | `--version` | Print the version |
 
@@ -159,8 +160,9 @@ npm run setup                        # add the hook + /receipt and /receipt-rebu
 node scripts/install.js --uninstall  # remove them
 ```
 
-It merges into your existing `settings.json` (writing a `.bak` first), never
-duplicates on re-run, and fills in this clone's absolute path automatically. By
+It merges into your existing `settings.json` (the first run keeps the original as
+`settings.json.bak`), never duplicates on re-run, leaves other hooks alone, and
+fills in this clone's absolute path automatically. By
 default it targets `~/.claude/` (override with the `CLAUDE_CONFIG_DIR`
 environment variable). The rest of this section documents what it configures —
 do it by hand instead if you prefer.
@@ -194,13 +196,17 @@ your hooks, so they never get a receipt automatically.
 
 **2. On-demand — `/receipt` slash command** in `~/.claude/commands/receipt.md`:
 type `/receipt` in any conversation to generate the receipt for the current
-session and open the HTML.
+session (even with other sessions running in parallel) and open the HTML.
 
 **3. Re-pricing — `/receipt-rebuild` slash command** in
 `~/.claude/commands/receipt-rebuild.md`: after you add or change a price in
 `models.json`, type `/receipt-rebuild` to regenerate every receipt in the
 `.claude-receipts` folder of the project the session is open in, at the new
-prices (it runs `--rebuild`). Works in the VS Code extension too.
+prices (it runs `--rebuild`). Works in the VS Code extension too. To re-price every
+project at once, run `node bin/receipt.js --rebuild --all` in a terminal.
+
+Both commands set `disable-model-invocation: true`, so only you run them; Claude
+can't call them on its own.
 
 Manage or disable the hook anytime via `/hooks`.
 
