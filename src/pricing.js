@@ -14,12 +14,24 @@ const table = JSON.parse(
 const PER_TOKEN = 1 / 1_000_000;
 const DATE_SUFFIX = /-\d{8}$/;
 
+// The plain model id behind a hosted-provider spelling: Bedrock
+// (us.anthropic.claude-opus-4-1-20250805-v1:0), Vertex (claude-opus-4-1@20250805)
+// and a context-window tag (claude-opus-5-5[1m]).
+function plainId(model) {
+  return model
+    .replace(/^(?:[a-z]+\.)?anthropic\./, '')
+    .replace(/-v\d+(?::\d+)?$/, '')
+    .replace(/@\d{8}$/, '')
+    .replace(/\[\w+\]$/, '');
+}
+
 // Find the price row for a model id: exact, or after dropping a date suffix
 // (claude-haiku-4-5-20251001). No looser prefix match: claude-sonnet-5-5 must
 // never borrow claude-sonnet-5's row, so an unknown model stays unpriced.
 export function rateFor(model) {
   if (!model) return null;
-  return table.models[model] ?? table.models[model.replace(DATE_SUFFIX, '')] ?? null;
+  const id = plainId(model);
+  return table.models[id] ?? table.models[id.replace(DATE_SUFFIX, '')] ?? null;
 }
 
 // The price tier of one API response: 'fast' (fast mode), 'long' (prompt above
@@ -51,10 +63,11 @@ function pricesFor(model, tier) {
 }
 
 // Cost (USD) for one model bucket. Returns per-component costs + a `known` flag.
+// Web searches are billed per request on top of tokens (web fetches are free).
 export function costFor(model, bucket) {
   const p = pricesFor(bucket.model ?? model, bucket.tier ?? '');
   if (!p) {
-    return { known: false, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, total: 0 };
+    return { known: false, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, webSearch: 0, total: 0 };
   }
   const input = bucket.input * p.input * PER_TOKEN;
   const output = bucket.output * p.output * PER_TOKEN;
@@ -62,12 +75,14 @@ export function costFor(model, bucket) {
     bucket.cacheWrite5m * p.input * p.mult.write5m * PER_TOKEN +
     bucket.cacheWrite1h * p.input * p.mult.write1h * PER_TOKEN;
   const cacheRead = bucket.cacheRead * p.input * p.mult.read * PER_TOKEN;
+  const webSearch = ((bucket.webSearch || 0) * (table.webSearchPer1000 || 0)) / 1000;
   return {
     known: true,
     input,
     output,
     cacheWrite,
     cacheRead,
-    total: input + output + cacheWrite + cacheRead,
+    webSearch,
+    total: input + output + cacheWrite + cacheRead + webSearch,
   };
 }
