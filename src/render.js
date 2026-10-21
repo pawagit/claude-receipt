@@ -164,7 +164,8 @@ export function renderMarkdown(v) {
   return L.join('\n');
 }
 
-export function renderHtml(v) {
+// `head` is extra markup for <head> (the receipt's embedded index entry).
+export function renderHtml(v, { head = '' } = {}) {
   const m = v.meta;
   const esc = (s) =>
     String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -217,6 +218,7 @@ export function renderHtml(v) {
   .qr svg { width: 134px; height: 134px; }
   .qrcap { text-align: center; font-size: 9.5px; letter-spacing: 1.5px; text-transform: uppercase; color: #999; }
 </style>
+${head}
 </head>
 <body>
   <div class="receipt">

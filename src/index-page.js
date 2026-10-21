@@ -1,11 +1,23 @@
 // A folder-level index of all receipts. Each receipt run upserts an entry into
 // `<dir>/index.json` (keyed by session id) and re-renders `<dir>/index.html`
 // from it — so the index is incremental, accurate, and cheap to maintain.
+//
+// Several sessions can end at once (closing a window with many Claude panels
+// runs the hook for each), so updates take a lock file and every write lands
+// via a temp file + rename. Each receipt's HTML also embeds its own entry
+// (RECEIPT_DATA_ID), so a corrupt or lost index.json can be rebuilt from the
+// receipt files instead of being silently replaced.
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, renameSync, openSync, closeSync, statSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 const MANIFEST = 'index.json';
+const LOCK = 'index.lock';
+// A receipt's file name as index.json records it: a plain name, never a path,
+// so an edited index.json can't make us read or write outside the folder.
+export const RECEIPT_FILE = /^[\w.-]+\.html$/;
+export const RECEIPT_DATA_ID = 'claude-receipt';
+const RECEIPT_DATA = new RegExp(`<script type="application/json" id="${RECEIPT_DATA_ID}">([\\s\\S]*?)</script>`);
 
 const fmtInt = (n) => Math.round(n || 0).toLocaleString('en-US');
 const fmtMoney = (n) => '$' + ((n || 0) >= 1 ? (n || 0).toFixed(2) : (n || 0).toFixed(4));
@@ -27,29 +39,125 @@ function fmtDuration(ms) {
   return `${s}s`;
 }
 
-export function loadManifest(dir) {
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// The folder's entries, and whether index.json was corrupt (then the entries
+// come from the receipt files themselves).
+function readManifest(dir) {
   const p = join(dir, MANIFEST);
-  if (!existsSync(p)) return {};
+  if (!existsSync(p)) return { entries: {}, corrupt: false };
   try {
-    return JSON.parse(readFileSync(p, 'utf8')).entries || {};
+    return { entries: JSON.parse(readFileSync(p, 'utf8')).entries || {}, corrupt: false };
   } catch {
-    return {};
+    return { entries: entriesFromReceipts(dir), corrupt: true };
   }
+}
+
+// Entries keyed by session id. Never an empty stand-in for a corrupt file.
+export function loadManifest(dir) {
+  return readManifest(dir).entries;
+}
+
+// The entries embedded in the folder's receipt files (receipts written by
+// v1.1.0 or later carry one).
+function entriesFromReceipts(dir) {
+  const entries = {};
+  for (const file of readdirSync(dir)) {
+    if (file === 'index.html' || !RECEIPT_FILE.test(file)) continue;
+    const m = readFileSync(join(dir, file), 'utf8').match(RECEIPT_DATA);
+    if (!m) continue;
+    try {
+      const e = JSON.parse(m[1]);
+      if (e.sessionId) entries[e.sessionId] = { ...e, htmlFile: file };
+    } catch {}
+  }
+  return entries;
+}
+
+// Serialise read-modify-write of index.json across processes. A lock older
+// than 30 s is left over from a crash and is taken over.
+function withLock(dir, fn) {
+  const lock = join(dir, LOCK);
+  const deadline = Date.now() + 5000;
+  let fd;
+  for (;;) {
+    try {
+      fd = openSync(lock, 'wx');
+      break;
+    } catch (err) {
+      if (err.code !== 'EEXIST' && err.code !== 'EPERM') throw err; // EPERM: a lock being deleted (Windows)
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > 30_000) rmSync(lock, { force: true });
+      } catch {}
+      if (Date.now() > deadline) throw new Error(`${lock} is held by another process; delete it if nothing is running`);
+      sleep(50);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    closeSync(fd);
+    rmSync(lock, { force: true });
+  }
+}
+
+// Write via a temp file + rename, so a reader never sees half a file. Windows
+// refuses the rename for a moment while another process has the target open.
+function writeAtomic(file, text) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, text, 'utf8');
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return renameSync(tmp, file);
+    } catch (err) {
+      if (attempt >= 40 || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) {
+        rmSync(tmp, { force: true });
+        throw err;
+      }
+      sleep(25);
+    }
+  }
+}
+
+function writeIndex(dir, entries) {
+  writeAtomic(join(dir, MANIFEST), JSON.stringify({ entries }, null, 2));
+  writeAtomic(join(dir, 'index.html'), renderIndexHtml(Object.values(entries)));
+}
+
+// A corrupt index.json is kept beside the new one, never overwritten.
+function setAsideIfCorrupt(dir, corrupt) {
+  if (corrupt) renameSync(join(dir, MANIFEST), join(dir, `${MANIFEST}.corrupt-${Date.now()}`));
 }
 
 // Upsert one session's entry and rewrite index.json + index.html.
 export function updateIndex(dir, entry) {
-  const entries = loadManifest(dir);
-  entries[entry.sessionId] = entry;
-  writeFileSync(join(dir, MANIFEST), JSON.stringify({ entries }, null, 2), 'utf8');
-  writeFileSync(join(dir, 'index.html'), renderIndexHtml(Object.values(entries)), 'utf8');
+  withLock(dir, () => {
+    const { entries, corrupt } = readManifest(dir);
+    setAsideIfCorrupt(dir, corrupt);
+    entries[entry.sessionId] = entry;
+    writeIndex(dir, entries);
+  });
 }
 
-// Rebuild index.html from an existing index.json (no new receipt generated).
+// Rebuild index.json + index.html from what is in the folder: entries whose
+// receipt file is gone are dropped, and receipts the index lost are added back.
 export function rebuildIndex(dir) {
-  const entries = Object.values(loadManifest(dir));
-  writeFileSync(join(dir, 'index.html'), renderIndexHtml(entries), 'utf8');
-  return entries.length;
+  return withLock(dir, () => {
+    const { entries, corrupt } = readManifest(dir);
+    setAsideIfCorrupt(dir, corrupt);
+    const all = { ...entriesFromReceipts(dir), ...entries };
+    const kept = Object.fromEntries(
+      Object.entries(all).filter(([, e]) => RECEIPT_FILE.test(e.htmlFile ?? '') && existsSync(join(dir, e.htmlFile))),
+    );
+    writeIndex(dir, kept);
+    return Object.keys(kept).length;
+  });
+}
+
+// The <script> block a receipt's HTML carries its index entry in.
+export function receiptDataScript(entry) {
+  const json = JSON.stringify(entry).replace(/</g, '\\u003c'); // no "</script>" inside
+  return `<script type="application/json" id="${RECEIPT_DATA_ID}">${json}</script>`;
 }
 
 export function renderIndexHtml(entries) {

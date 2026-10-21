@@ -26,7 +26,7 @@ import { listSessions, findLatest, findBySessionId, findSession, projectsRoot } 
 import { parseSessionFile, findSubagentFiles } from '../src/parse.js';
 import { aggregate, extractMeta, mergeAggregates } from '../src/aggregate.js';
 import { buildView, renderMarkdown, renderHtml, fmtDateTime } from '../src/render.js';
-import { updateIndex, rebuildIndex, loadManifest } from '../src/index-page.js';
+import { updateIndex, rebuildIndex, loadManifest, receiptDataScript, RECEIPT_FILE } from '../src/index-page.js';
 
 // A mistake on the command line: reported with a pointer to --help, exit code 2.
 class UsageError extends Error {}
@@ -180,10 +180,6 @@ function receiptBasename(meta, view, sessionId) {
   return `${date}_${slug}_${sessionId.slice(0, 8)}`;
 }
 
-// A receipt's file name as index.json records it: a plain name, never a path,
-// so an edited index.json can't make us write outside the folder.
-const RECEIPT_FILE = /^[\w.-]+\.html$/;
-
 // The file name this session's receipt already has in `dir`, if any — so a
 // session renamed later keeps (and overwrites) its files instead of orphaning them.
 function existingBase(dir, sessionId) {
@@ -214,8 +210,6 @@ function writeReceipt(session, opts, { outDir, base } = {}) {
   }
 
   const view = buildView(meta, agg, { subagent: subagentView });
-  const md = renderMarkdown(view);
-  const html = renderHtml(view);
 
   // Per-project by default: write into the folder of the project the session
   // belongs to (its recorded cwd), regardless of where this command runs from.
@@ -224,25 +218,24 @@ function writeReceipt(session, opts, { outDir, base } = {}) {
     : join(meta.cwd || process.cwd(), '.claude-receipts');
   mkdirSync(outDir, { recursive: true });
   base ??= existingBase(outDir, session.sessionId) ?? receiptBasename(meta, view, session.sessionId);
+  const entry = {
+    sessionId: session.sessionId,
+    title: meta.title,
+    project: meta.project,
+    startedAt: view.startedAt,
+    durationMs: view.durationMs,
+    totalTokens: view.totalTokens,
+    totalCost: view.totalCost,
+    htmlFile: `${base}.html`,
+    mdFile: `${base}.md`,
+    generatedAt: view.generatedAt,
+  };
   const mdPath = join(outDir, `${base}.md`);
   const htmlPath = join(outDir, `${base}.html`);
-  writeFileSync(mdPath, md, 'utf8');
-  writeFileSync(htmlPath, html, 'utf8');
+  writeFileSync(mdPath, renderMarkdown(view), 'utf8');
+  writeFileSync(htmlPath, renderHtml(view, { head: receiptDataScript(entry) }), 'utf8');
 
-  if (!opts.noIndex) {
-    updateIndex(outDir, {
-      sessionId: session.sessionId,
-      title: meta.title,
-      project: meta.project,
-      startedAt: view.startedAt,
-      durationMs: view.durationMs,
-      totalTokens: view.totalTokens,
-      totalCost: view.totalCost,
-      htmlFile: `${base}.html`,
-      mdFile: `${base}.md`,
-      generatedAt: view.generatedAt,
-    });
-  }
+  if (!opts.noIndex) updateIndex(outDir, entry);
 
   return { meta, view, parseErrors, mdPath, htmlPath };
 }
