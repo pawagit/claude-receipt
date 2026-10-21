@@ -32,7 +32,7 @@ tokens, so each response is counted from its final row.
 
 From zero to your first receipt:
 
-**1. Install Node.js 20 or newer.** Check with `node --version`. That's the only
+**1. Install Node.js 22 or newer.** Check with `node --version`. That's the only
 prerequisite — this tool has **no dependencies and no build step** (it uses only
 Node's built-in modules).
 
@@ -71,12 +71,12 @@ npm run setup          # or: node scripts/install.js
 
 It adds a `SessionEnd` hook and the `/receipt` and `/receipt-rebuild` commands to
 your global `~/.claude/` config, filling in this clone's absolute path for you — no
-manual path editing.
-It merges into any existing `settings.json` (keeping the original as
-`settings.json.bak`), is safe to re-run, and undoes cleanly with `node scripts/install.js --uninstall`. Open
-`/hooks` once (or restart) to load the hook into a running session. See
-**Auto-generate on every session** for exactly what it configures, or to set it
-up by hand.
+manual path editing. It merges into any existing `settings.json` (keeping the
+original as `settings.json.bak`), is safe to re-run, and undoes cleanly with
+`node scripts/install.js --uninstall`. Open `/hooks` once (or restart) to load the
+hook into a running session. See **Auto-generate on every session** for exactly
+what it configures, or to set it up by hand. After updating this clone, run
+`npm run setup` again to refresh the slash commands.
 
 For a shorter `claude-receipt` command instead of `node …/bin/receipt.js`, see
 **Optional: install as a terminal command**.
@@ -126,7 +126,8 @@ location with `--out <dir>`. Add `.claude-receipts/` to each repo's `.gitignore`
 
 Each folder also gets an **`index.html`** listing all its receipts with running
 totals (backed by an `index.json` manifest), rebuilt on every run — or on demand
-with `--index [dir]`.
+with `--index [dir]`. Every receipt also carries its own index entry, so a damaged
+`index.json` is set aside and rebuilt from the receipt files rather than lost.
 
 ### Optional: install as a terminal command
 
@@ -212,9 +213,12 @@ Manage or disable the hook anytime via `/hooks`.
 
 ## What's on the receipt
 
-- Session title (from Claude Code's `ai-title`), project, git branch, CC version
-- Start time and duration
-- Prompts · assistant turns · tool calls; web search/fetch counts
+- Session title (a name you set with `/rename`, else Claude Code's AI title), project,
+  git branch, CC version
+- Start time and **active** duration: pauses over 30 minutes are left out, and the
+  wall time is shown too when idle time dominates (`1h 18m active (wall 68h 7m)`)
+- Prompts you typed (slash commands included; not Claude Code's injected messages or
+  sub-agent task prompts) · API responses · tool calls; web search/fetch counts
 - Per-model line items: input / output / cache-write / cache-read tokens + subtotal
   (fast-mode and long-context responses get a line of their own)
 - Sub-agent token rollup (separate line; toggle with `--no-subagents`)
@@ -240,19 +244,43 @@ Manage or disable the hook anytime via `/hooks`.
   *estimated equivalent API cost*, i.e. what it would cost on the API.
 - Receipting a **live** session is fine: a half-written final line is skipped (and reported).
 
+## Troubleshooting
+
+- **A session has no receipt.** Its window was probably closed before the session
+  ended, so `SessionEnd` never fired. The next session ending in that project
+  catches it up once it has been idle for an hour, or run
+  `node bin/receipt.js --missing <project>/.claude-receipts`. If the hook itself
+  failed, the reason is in `~/.claude/claude-receipt.log`.
+- **A model shows `n/a`, or prices changed.** Add or edit its row in `models.json`,
+  then `/receipt-rebuild` (one project) or `node bin/receipt.js --rebuild --all`.
+- **`index.html` lists a deleted receipt, or misses one.** Run
+  `node bin/receipt.js --index <project>/.claude-receipts`.
+- **An `index.lock` file stays behind.** Left by a crash; the next run takes it over
+  after 30 seconds, or delete it if nothing is running.
+
+## Development
+
+`npm test` runs the test suite (Node's built-in test runner, no dependencies). The
+tests build small synthetic transcripts in a temp folder and point
+`CLAUDE_CONFIG_DIR` there, so they never read or write your real `~/.claude`.
+[CHANGELOG.md](CHANGELOG.md) lists what changed in each release.
+
 ## Project layout
 
 ```
 bin/receipt.js     CLI entry point
 scripts/install.js install / remove the SessionEnd hook + /receipt, /receipt-rebuild
-src/discover.js    find session files under ~/.claude/projects
+src/config.js      where Claude Code's config lives ($CLAUDE_CONFIG_DIR or ~/.claude)
+src/discover.js    find session files under <config>/projects
 src/parse.js       read JSONL (tolerant) + locate nested sub-agent transcripts
-src/aggregate.js   dedup usage by message.id, group by model, counts, duration
+src/aggregate.js   dedup usage by message.id, group by model, prompts, active time
 src/pricing.js     token → cost via models.json
 src/render.js      view-model + Markdown and HTML renderers
+src/text.js        emoji-safe truncation
 src/qrcode.js      dependency-free QR encoder (SVG output) for the receipt
-src/index-page.js  folder index.html + index.json manifest
+src/index-page.js  folder index.html + index.json manifest (locked, atomic writes)
 models.json        editable price table
+test/              node:test suite (npm test)
 assets/            brand source art (claudecode-color.svg) — not loaded at runtime
 ```
 

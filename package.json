@@ -1,6 +1,6 @@
 {
   "name": "claude-receipt",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Generate a Markdown + HTML receipt (tokens, models, cost) for a Claude Code session — works for VS Code extension and terminal sessions on Windows, macOS, and Linux.",
   "keywords": [
     "claude",
@@ -32,6 +32,6 @@
     "test": "node --test test/*.test.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }
