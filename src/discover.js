@@ -1,16 +1,18 @@
 // Locating Claude Code session transcripts on disk.
 //
 // Both the terminal CLI and the official VS Code extension write to the same
-// store: ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
-// (the folder name is the project path with non-alphanumerics replaced by '-',
-// but we never need to decode it — each record carries the real `cwd`).
+// store: <config>/projects/<encoded-cwd>/<session-id>.jsonl, where <config> is
+// $CLAUDE_CONFIG_DIR or ~/.claude (the folder name is the project path with
+// non-alphanumerics replaced by '-', but we never need to decode it — each
+// record carries the real `cwd`).
 
 import { readdirSync, statSync, existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { configDir } from './config.js';
+
 export function projectsRoot() {
-  return join(homedir(), '.claude', 'projects');
+  return join(configDir(), 'projects');
 }
 
 // All top-level session files: <root>/<project>/<session-id>.jsonl
@@ -53,4 +55,17 @@ export function findLatest(root = projectsRoot()) {
 
 export function findBySessionId(id, root = projectsRoot()) {
   return listSessions(root).find((s) => s.sessionId === id) ?? null;
+}
+
+// A session by full id or by a unique prefix (receipt file names show the first
+// 8 characters). Throws when a prefix matches more than one session.
+export function findSession(idOrPrefix, root = projectsRoot()) {
+  const sessions = listSessions(root);
+  const exact = sessions.find((s) => s.sessionId === idOrPrefix);
+  if (exact) return exact;
+  const matches = sessions.filter((s) => s.sessionId.startsWith(idOrPrefix));
+  if (matches.length > 1) {
+    throw new Error(`Session id "${idOrPrefix}" matches ${matches.length} sessions; give more characters.`);
+  }
+  return matches[0] ?? null;
 }

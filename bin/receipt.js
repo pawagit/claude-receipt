@@ -2,8 +2,9 @@
 // claude-receipt — generate a Markdown + HTML receipt for a Claude Code session.
 //
 // Usage:
-//   node bin/receipt.js                 # latest session anywhere
-//   node bin/receipt.js --session <id>  # a specific session id
+//   node bin/receipt.js                 # the current session (inside Claude Code), else the latest
+//   node bin/receipt.js --latest        # the most recent session anywhere
+//   node bin/receipt.js --session <id>  # a specific session (full id or unique prefix)
 //   node bin/receipt.js --project <dir> # latest session whose cwd matches <dir>
 //   node bin/receipt.js --file <path>   # a specific transcript .jsonl
 //   node bin/receipt.js --hook          # read a hook payload on stdin (for SessionEnd)
@@ -14,43 +15,84 @@
 //   node bin/receipt.js --index [dir]   # rebuild a folder's index.html, then exit
 //   node bin/receipt.js --rebuild [dir] # regenerate every receipt in a folder (new prices)
 //   node bin/receipt.js --open          # open the HTML when done
+//   node bin/receipt.js --version       # print the version
 
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';
 import { spawn } from 'node:child_process';
+import { parseArgs as parseCli } from 'node:util';
 
-import { listSessions, findLatest, findBySessionId } from '../src/discover.js';
+import { listSessions, findLatest, findBySessionId, findSession, projectsRoot } from '../src/discover.js';
 import { parseSessionFile, findSubagentFiles } from '../src/parse.js';
 import { aggregate, extractMeta, mergeAggregates } from '../src/aggregate.js';
-import { buildView, renderMarkdown, renderHtml } from '../src/render.js';
+import { buildView, renderMarkdown, renderHtml, fmtDateTime } from '../src/render.js';
 import { updateIndex, rebuildIndex, loadManifest } from '../src/index-page.js';
 
+// A mistake on the command line: reported with a pointer to --help, exit code 2.
+class UsageError extends Error {}
+
+const OPTIONS = {
+  session: { type: 'string' },
+  project: { type: 'string' },
+  file: { type: 'string' },
+  latest: { type: 'boolean' },
+  hook: { type: 'boolean' },
+  list: { type: 'boolean' },
+  out: { type: 'string' },
+  'no-subagents': { type: 'boolean' },
+  'no-index': { type: 'boolean' },
+  index: { type: 'boolean' },
+  rebuild: { type: 'boolean' },
+  open: { type: 'boolean' },
+  version: { type: 'boolean', short: 'v' },
+  help: { type: 'boolean', short: 'h' },
+};
+
+// Strict: an unknown flag or a flag missing its value is an error, never a
+// silent fallback to some other session. Only --index/--rebuild take a [dir].
 function parseArgs(argv) {
-  const opts = { out: null, open: false, list: false, subagents: true, session: null, project: null, file: null, hook: false, index: false, indexDir: null, rebuild: false, rebuildDir: null, noIndex: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--list') opts.list = true;
-    else if (a === '--open') opts.open = true;
-    else if (a === '--no-subagents') opts.subagents = false;
-    else if (a === '--session') opts.session = argv[++i];
-    else if (a === '--project') opts.project = argv[++i];
-    else if (a === '--file') opts.file = argv[++i];
-    else if (a === '--hook') opts.hook = true;
-    else if (a === '--index') { opts.index = true; if (argv[i + 1] && !argv[i + 1].startsWith('-')) opts.indexDir = argv[++i]; }
-    else if (a === '--rebuild') { opts.rebuild = true; if (argv[i + 1] && !argv[i + 1].startsWith('-')) opts.rebuildDir = argv[++i]; }
-    else if (a === '--no-index') opts.noIndex = true;
-    else if (a === '--out') opts.out = argv[++i];
-    else if (a === '-h' || a === '--help') opts.help = true;
-    else console.error(`Unknown argument: ${a}`);
+  let parsed;
+  try {
+    parsed = parseCli({ args: argv, options: OPTIONS, allowPositionals: true, strict: true });
+  } catch (err) {
+    // Node's unknown-option text goes on about '--'; the first sentence is enough.
+    throw new UsageError(err.message.replace(/\. To specify a positional[\s\S]*/, ''));
   }
-  return opts;
+  const { values: v, positionals } = parsed;
+  const takesDir = v.index || v.rebuild;
+  if (positionals.length > (takesDir ? 1 : 0)) {
+    throw new UsageError(`Unexpected argument "${positionals[takesDir ? 1 : 0]}"`);
+  }
+  const selectors = ['file', 'session', 'project', 'latest'].filter((k) => v[k] !== undefined);
+  if (selectors.length > 1) {
+    throw new UsageError(`Pick one session: ${selectors.map((k) => `--${k}`).join(', ')} can't be combined`);
+  }
+  return {
+    session: v.session ?? null,
+    project: v.project ?? null,
+    file: v.file ?? null,
+    latest: !!v.latest,
+    hook: !!v.hook,
+    list: !!v.list,
+    out: v.out ?? null,
+    subagents: !v['no-subagents'],
+    noIndex: !!v['no-index'],
+    index: !!v.index,
+    rebuild: !!v.rebuild,
+    dir: positionals[0] ?? null,
+    open: !!v.open,
+    version: !!v.version,
+    help: !!v.help,
+  };
 }
 
 function printHelp() {
   console.log(`claude-receipt — receipts for Claude Code sessions
 
-  (no args)            latest session anywhere
-  --session <id>       a specific session id
+  (no args)            the current session when run inside Claude Code,
+                       else the latest session anywhere
+  --latest             the latest session anywhere
+  --session <id>       a specific session (full id or a unique prefix)
   --project <dir>      latest session whose cwd matches <dir>
   --file <path>        receipt a specific transcript .jsonl
   --hook               read a Claude Code hook payload on stdin (for SessionEnd)
@@ -61,8 +103,14 @@ function printHelp() {
   --index [dir]        rebuild index.html for a receipts folder, then exit
   --rebuild [dir]      regenerate every receipt in a receipts folder from its
                        transcript (e.g. after a price change), keeping file names
+                       [dir] defaults to the current session's .claude-receipts
   --open               open the generated HTML
+  --version            print the version
   --help`);
+}
+
+function version() {
+  return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 }
 
 function pickSession(opts) {
@@ -72,8 +120,8 @@ function pickSession(opts) {
     return { file: f, sessionId: basename(f).replace(/\.jsonl$/, '') };
   }
   if (opts.session) {
-    const s = findBySessionId(opts.session);
-    if (!s) throw new Error(`No session found with id "${opts.session}".`);
+    const s = findSession(opts.session);
+    if (!s) throw new Error(`No session found with id "${opts.session}" under ${projectsRoot()}.`);
     return s;
   }
   if (opts.project) {
@@ -86,9 +134,27 @@ function pickSession(opts) {
     if (!match) throw new Error(`No session found for project "${opts.project}".`);
     return match;
   }
+  // Inside Claude Code (a slash command, or Claude's own shell) the current
+  // session is the one meant — not whichever transcript changed last, which may
+  // be another session running in parallel.
+  const current = process.env.CLAUDE_CODE_SESSION_ID;
+  if (current && !opts.latest) {
+    const s = findBySessionId(current);
+    if (s) return s;
+    console.error(`Note: current session ${current} not found under ${projectsRoot()}; using the latest session.`);
+  }
   const latest = findLatest();
-  if (!latest) throw new Error('No Claude Code sessions found under ~/.claude/projects.');
+  if (!latest) throw new Error(`No Claude Code sessions found under ${projectsRoot()}.`);
   return latest;
+}
+
+// Without a [dir], --index and --rebuild work on the current session's receipts
+// folder inside Claude Code (whose shell may have cd'd into a subfolder), else
+// on ./.claude-receipts.
+function defaultReceiptsDir() {
+  const current = process.env.CLAUDE_CODE_SESSION_ID && findBySessionId(process.env.CLAUDE_CODE_SESSION_ID);
+  const cwd = current && parseSessionFile(current.file).records.find((r) => r.cwd)?.cwd;
+  return join(cwd || process.cwd(), '.claude-receipts');
 }
 
 function openFile(path) {
@@ -185,13 +251,14 @@ function writeReceipt(session, opts, { outDir, base } = {}) {
 // whose transcript is gone (Claude Code prunes old ones) keep their receipt.
 function rebuildReceipts(dir, opts) {
   const entries = Object.values(loadManifest(dir));
+  const sessions = new Map(listSessions().map((s) => [s.sessionId, s]));
   let rebuilt = 0;
   for (const e of entries) {
     if (!RECEIPT_FILE.test(e.htmlFile)) {
       console.log(`  skipped  ${JSON.stringify(e.htmlFile)} (invalid file name)`);
       continue;
     }
-    const session = findBySessionId(e.sessionId);
+    const session = sessions.get(e.sessionId);
     if (!session) {
       console.log(`  kept     ${e.htmlFile} (transcript not found)`);
       continue;
@@ -206,6 +273,7 @@ function rebuildReceipts(dir, opts) {
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) return printHelp();
+  if (opts.version) return console.log(version());
 
   // SessionEnd hook: read the payload Claude Code pipes on stdin. It includes
   // `transcript_path` pointing at the exact .jsonl for the session that ended.
@@ -219,7 +287,7 @@ function main() {
   }
 
   if (opts.index) {
-    const dir = resolve(opts.indexDir || '.claude-receipts');
+    const dir = resolve(opts.dir || defaultReceiptsDir());
     if (!existsSync(dir)) throw new Error(`No receipts folder at ${dir}`);
     const n = rebuildIndex(dir);
     console.log(`Rebuilt index for ${n} receipt(s): ${join(dir, 'index.html')}`);
@@ -227,7 +295,7 @@ function main() {
   }
 
   if (opts.rebuild) {
-    const dir = resolve(opts.rebuildDir || '.claude-receipts');
+    const dir = resolve(opts.dir || defaultReceiptsDir());
     if (!existsSync(dir)) throw new Error(`No receipts folder at ${dir}`);
     const { rebuilt, total } = rebuildReceipts(dir, { ...opts, noIndex: false });
     console.log(`Rebuilt ${rebuilt} of ${total} receipt(s): ${join(dir, 'index.html')}`);
@@ -236,14 +304,14 @@ function main() {
 
   if (opts.list) {
     const sessions = listSessions();
-    if (!sessions.length) return console.log('No sessions found under ~/.claude/projects.');
-    console.log(`Found ${sessions.length} session(s):\n`);
-    for (const s of sessions.slice(0, 50)) {
+    if (!sessions.length) return console.log(`No sessions found under ${projectsRoot()}.`);
+    const shown = sessions.slice(0, 50);
+    console.log(`Found ${sessions.length} session(s)${shown.length < sessions.length ? `, showing the ${shown.length} most recent` : ''}:\n`);
+    for (const s of shown) {
       const { records } = parseSessionFile(s.file);
       const meta = extractMeta(records, s.sessionId);
-      const when = new Date(s.mtimeMs).toISOString().slice(0, 16).replace('T', ' ');
-      console.log(`  ${when}  ${meta.project ?? '?'}  —  ${meta.title}`);
-      console.log(`            ${s.sessionId}`);
+      console.log(`  ${fmtDateTime(s.mtimeMs)}  ${meta.project ?? '?'}  —  ${meta.title}`);
+      console.log(`                    ${s.sessionId}`);
     }
     return;
   }
@@ -254,7 +322,7 @@ function main() {
   if (opts.hook) {
     console.log(`claude-receipt: ${meta.title} → ${htmlPath}`);
   } else {
-    console.log(`Receipt for: ${meta.title}`);
+    console.log(`Receipt for: ${meta.title}  [${session.sessionId.slice(0, 8)}]`);
     console.log(`  ${view.totalTokens.toLocaleString('en-US')} tokens · est. ${fmtCost(view.totalCost)}`);
     if (parseErrors) console.log(`  (skipped ${parseErrors} unparseable line(s) — session may be live)`);
     console.log(`  ${mdPath}`);
@@ -269,5 +337,9 @@ try {
 } catch (err) {
   if (process.argv.includes('--hook')) process.exit(0); // never disrupt session end
   console.error(`Error: ${err.message}`);
+  if (err instanceof UsageError) {
+    console.error('Run with --help to see the options.');
+    process.exit(2);
+  }
   process.exit(1);
 }

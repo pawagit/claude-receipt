@@ -16,15 +16,16 @@
 // open /hooks once (or restart) to load the hook into a running session.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
+
+import { configDir as claudeConfigDir } from '../src/config.js';
 
 const HOOK_MARKER = 'receipt.js'; // identifies our SessionEnd hook among any others
 
 const here = dirname(fileURLToPath(import.meta.url));
 const receiptPath = resolve(here, '..', 'bin', 'receipt.js').replaceAll('\\', '/');
-const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+const configDir = claudeConfigDir();
 const settingsPath = join(configDir, 'settings.json');
 const commandPath = join(configDir, 'commands', 'receipt.md');
 const rebuildCommandPath = join(configDir, 'commands', 'receipt-rebuild.md');

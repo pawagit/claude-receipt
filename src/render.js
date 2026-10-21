@@ -63,7 +63,7 @@ function fmtDurationLine(v) {
     : active;
 }
 
-function fmtDateTime(ms) {
+export function fmtDateTime(ms) {
   if (ms == null) return '—';
   const d = new Date(ms);
   const pad = (x) => String(x).padStart(2, '0');

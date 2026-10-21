@@ -1,9 +1,16 @@
 // Builders for synthetic transcript records, so tests never read real sessions.
 // Timestamps are minutes after a fixed start; ids are unique per call.
 
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { after } from 'node:test';
+
+const BIN = fileURLToPath(new URL('../bin/receipt.js', import.meta.url));
+const tempDirs = [];
+after(() => tempDirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
 let seq = 0;
 const START = Date.UTC(2026, 9, 1, 9, 0);
@@ -34,11 +41,50 @@ export function assistant({
   };
 }
 
+// A temp folder, removed when the test file finishes.
 export function tempDir() {
-  return mkdtempSync(join(tmpdir(), 'claude-receipt-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'claude-receipt-test-'));
+  tempDirs.push(dir);
+  return dir;
 }
 
 export function writeJsonl(file, records) {
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+}
+
+// A throwaway Claude Code setup: a config dir (what CLAUDE_CONFIG_DIR points
+// at) holding transcripts, and a project folder those sessions ran in.
+export function fakeClaude() {
+  const root = tempDir();
+  const config = join(root, 'config');
+  const project = join(root, 'project');
+  mkdirSync(project, { recursive: true });
+  return {
+    root,
+    config,
+    project,
+    receipts: join(project, '.claude-receipts'),
+    // Write a session transcript; `ageMin` sets how long ago it was last modified.
+    addSession(id, { title = id, records, ageMin = 0, entrypoint = 'cli', projectDir = 'proj', cwd = project } = {}) {
+      const file = join(config, 'projects', projectDir, `${id}.jsonl`);
+      const body = records ?? [user('hi'), assistant({ usage: { input_tokens: 10, output_tokens: 100 } })];
+      writeJsonl(file, [
+        { type: 'ai-title', aiTitle: title, sessionId: id },
+        ...body.map((r) => ({ cwd, sessionId: id, entrypoint, ...r })),
+      ]);
+      const t = Date.now() / 1000 - ageMin * 60;
+      utimesSync(file, t, t);
+      return file;
+    },
+  };
+}
+
+// Run the CLI against a fake config. CLAUDE_CODE_SESSION_ID is cleared unless
+// given, since the tests themselves may run inside a Claude Code session.
+export function runCli(args, { config, env = {}, input, cwd } = {}) {
+  const fullEnv = { ...process.env, CLAUDE_CONFIG_DIR: config ?? tempDir() };
+  delete fullEnv.CLAUDE_CODE_SESSION_ID;
+  Object.assign(fullEnv, env);
+  return spawnSync(process.execPath, [BIN, ...args], { env: fullEnv, input, cwd, encoding: 'utf8' });
 }

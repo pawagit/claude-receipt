@@ -84,16 +84,22 @@ For a shorter `claude-receipt` command instead of `node …/bin/receipt.js`, see
 ## Usage
 
 ```bash
-node bin/receipt.js                  # latest session anywhere
-node bin/receipt.js --session <id>   # a specific session id
+node bin/receipt.js                  # the current session inside Claude Code, else the latest
+node bin/receipt.js --latest         # the latest session anywhere
+node bin/receipt.js --session <id>   # a specific session (full id or unique prefix)
 node bin/receipt.js --project <dir>  # latest session whose cwd matches <dir>
 node bin/receipt.js --list           # list available sessions
 node bin/receipt.js --open           # also open the HTML when done
 ```
 
+Run inside Claude Code (from `/receipt`, or by Claude), it receipts **the session it
+runs in**, read from the `CLAUDE_CODE_SESSION_ID` environment variable, even while
+other sessions are running in parallel.
+
 | Flag | Meaning |
 |---|---|
-| `--session <id>` | Receipt a specific session id |
+| `--latest` | Receipt the most recently active session anywhere |
+| `--session <id>` | Receipt a specific session (full id, or a unique prefix such as the 8 characters in a receipt's file name) |
 | `--project <dir>` | Latest session whose recorded `cwd` matches `<dir>` |
 | `--file <path>` | Receipt a specific transcript `.jsonl` |
 | `--hook` | Read a Claude Code hook payload on stdin (what the `SessionEnd` hook runs) |
@@ -104,6 +110,12 @@ node bin/receipt.js --open           # also open the HTML when done
 | `--index [dir]` | Rebuild `index.html` for a receipts folder, then exit |
 | `--rebuild [dir]` | Regenerate every receipt in a receipts folder from its transcript (after a price change), keeping file names |
 | `--open` | Open the generated HTML |
+| `--version` | Print the version |
+
+`[dir]` defaults to the current session's `.claude-receipts` folder inside Claude
+Code, else `./.claude-receipts`. Unknown flags and flags missing their value are
+errors (exit code 2). Transcripts are read from `$CLAUDE_CONFIG_DIR/projects` when
+that variable is set, else `~/.claude/projects`.
 
 Output is written to the **session's own project folder**:
 `<project>/.claude-receipts/<date>_<title-slug>_<shortid>.{md,html}` — e.g.
