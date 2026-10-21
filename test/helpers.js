@@ -67,10 +67,13 @@ export function fakeClaude() {
     receipts: join(project, '.claude-receipts'),
     // Write a session transcript; `ageMin` sets how long ago it was last modified.
     // Like Claude Code, the transcript's folder is named after its cwd.
-    addSession(id, { title = id, records, ageMin = 0, entrypoint = 'cli', cwd = project } = {}) {
+    // `leadingKb` puts that much of record without cwd/entrypoint first, as
+    // queued-message records do in real transcripts.
+    addSession(id, { title = id, records, ageMin = 0, entrypoint = 'cli', cwd = project, leadingKb = 0 } = {}) {
       const file = join(config, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`);
       const body = records ?? [user('hi'), assistant({ usage: { input_tokens: 10, output_tokens: 100 } })];
       writeJsonl(file, [
+        ...(leadingKb ? [{ type: 'queue-operation', content: 'é'.repeat(leadingKb * 512), sessionId: id }] : []),
         { type: 'ai-title', aiTitle: title, sessionId: id },
         ...body.map((r) => ({ cwd, sessionId: id, entrypoint, ...r })),
       ]);

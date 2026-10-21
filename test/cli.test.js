@@ -71,7 +71,7 @@ test("--rebuild without a dir rebuilds the current session's folder, wherever th
 test('--rebuild --all rebuilds every project folder', () => {
   const c = fakeClaude();
   c.addSession(A, { title: 'Here' });
-  c.addSession(B, { title: 'Elsewhere', cwd: c.root });
+  c.addSession(B, { title: 'Elsewhere', cwd: c.root, leadingKb: 300 }); // cwd only after 300 KB
   for (const id of [A, B]) assert.equal(runCli(['--session', id], { config: c.config }).status, 0);
   const r = runCli(['--rebuild', '--all'], { config: c.config });
   assert.equal(r.status, 0, r.stderr);
