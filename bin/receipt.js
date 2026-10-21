@@ -5,11 +5,15 @@
 //   node bin/receipt.js                 # latest session anywhere
 //   node bin/receipt.js --session <id>  # a specific session id
 //   node bin/receipt.js --project <dir> # latest session whose cwd matches <dir>
+//   node bin/receipt.js --file <path>   # a specific transcript .jsonl
+//   node bin/receipt.js --hook          # read a hook payload on stdin (for SessionEnd)
 //   node bin/receipt.js --list          # list available sessions
-//   node bin/receipt.js --out <dir>     # output directory (default ./.claude-receipts)
+//   node bin/receipt.js --out <dir>     # output directory (default: the session's own project)
 //   node bin/receipt.js --no-subagents  # exclude nested sub-agent token spend
-//   node bin/receipt.js --open          # open the HTML when done
+//   node bin/receipt.js --no-index      # don't update the folder index.html
+//   node bin/receipt.js --index [dir]   # rebuild a folder's index.html, then exit
 //   node bin/receipt.js --rebuild [dir] # regenerate every receipt in a folder (new prices)
+//   node bin/receipt.js --open          # open the HTML when done
 
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';

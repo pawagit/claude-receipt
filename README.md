@@ -37,7 +37,7 @@ Node's built-in modules).
 **2. Get the code.**
 
 ```bash
-git clone https://github.com/<your-username>/claude-receipt.git
+git clone https://github.com/pawagit/claude-receipt.git
 cd claude-receipt
 ```
 
@@ -60,14 +60,16 @@ This receipts your most recent session, writes a `.md` + `.html` into that
 session's project folder, and opens the HTML.
 
 **5. (Optional) Wire it into Claude Code.** For a receipt automatically at the
-end of every session, plus a `/receipt` slash command, run the installer:
+end of every session, plus the `/receipt` and `/receipt-rebuild` slash commands,
+run the installer:
 
 ```bash
 npm run setup          # or: node scripts/install.js
 ```
 
-It adds a `SessionEnd` hook and a `/receipt` command to your global `~/.claude/`
-config, filling in this clone's absolute path for you — no manual path editing.
+It adds a `SessionEnd` hook and the `/receipt` and `/receipt-rebuild` commands to
+your global `~/.claude/` config, filling in this clone's absolute path for you — no
+manual path editing.
 It merges into any existing `settings.json` (writing a `.bak` first), is safe to
 re-run, and undoes cleanly with `node scripts/install.js --uninstall`. Open
 `/hooks` once (or restart) to load the hook into a running session. See
@@ -91,6 +93,8 @@ node bin/receipt.js --open           # also open the HTML when done
 |---|---|
 | `--session <id>` | Receipt a specific session id |
 | `--project <dir>` | Latest session whose recorded `cwd` matches `<dir>` |
+| `--file <path>` | Receipt a specific transcript `.jsonl` |
+| `--hook` | Read a Claude Code hook payload on stdin (what the `SessionEnd` hook runs) |
 | `--list` | List discoverable sessions (date · project · title · id) |
 | `--out <dir>` | Output directory (default: the session's own `<project>/.claude-receipts`) |
 | `--no-subagents` | Exclude nested workflow/Task sub-agent token spend |
@@ -110,7 +114,7 @@ with `--index [dir]`.
 
 ### Optional: install as a terminal command
 
-The auto-receipt hook and `/receipt` **don't need this** — they call `node` with
+The auto-receipt hook and the slash commands **don't need this** — they call `node` with
 the full path. `npm link` is only so you can type `claude-receipt` in a terminal
 instead of `node /path/to/claude-receipt/bin/receipt.js`.
 
@@ -185,6 +189,7 @@ Manage or disable the hook anytime via `/hooks`.
 - Start time and duration
 - Prompts · assistant turns · tool calls; web search/fetch counts
 - Per-model line items: input / output / cache-write / cache-read tokens + subtotal
+  (fast-mode and long-context responses get a line of their own)
 - Sub-agent token rollup (separate line; toggle with `--no-subagents`)
 - **Total tokens** and **estimated equivalent API cost**
 - A scannable **QR code** (HTML receipt) encoding the session summary, plus the Claude Code brand mark
@@ -211,7 +216,7 @@ Manage or disable the hook anytime via `/hooks`.
 
 ```
 bin/receipt.js     CLI entry point
-scripts/install.js install / remove the SessionEnd hook + /receipt command
+scripts/install.js install / remove the SessionEnd hook + /receipt, /receipt-rebuild
 src/discover.js    find session files under ~/.claude/projects
 src/parse.js       read JSONL (tolerant) + locate nested sub-agent transcripts
 src/aggregate.js   dedup usage by message.id, group by model, counts, duration
@@ -233,6 +238,5 @@ what the tool is for.
 
 ## Roadmap ideas
 
-- `SessionEnd` hook for auto-generation, and/or a `/receipt` slash command
 - Per-day / per-project roll-up receipts
 - "Cache saved you X" stat
