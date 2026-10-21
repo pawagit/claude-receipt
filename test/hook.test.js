@@ -18,6 +18,7 @@ function project() {
   c.addSession(id(4), { title: 'Still open', ageMin: 10 });
   c.addSession(id(5), { title: 'Nothing billed', ageMin: 120, records: [user('hi'), assistant({ model: '<synthetic>' })] });
   c.addSession(id(6), { title: 'Other project', ageMin: 120, cwd: c.root });
+  c.addSession(id(7), { title: 'Scripted run', ageMin: 120, entrypoint: null }); // start not recorded
   return { c, ended };
 }
 

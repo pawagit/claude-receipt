@@ -106,7 +106,8 @@ function printHelp() {
   --hook               read a Claude Code hook payload on stdin (for SessionEnd);
                        also catches up the project's missed sessions (--missing)
   --missing [dir]      receipt the project's sessions that have no receipt yet
-                       (idle for an hour; Agent SDK runs skipped)
+                       (idle for an hour; Agent SDK runs and sessions that
+                       don't record how they were started are skipped)
   --list               list available sessions
   --out <dir>          output directory (default: the session's own project)
   --no-subagents       exclude nested sub-agent token spend
@@ -204,8 +205,10 @@ const CATCH_UP_IDLE_MS = 60 * 60_000;
 
 // Receipt the sessions of one project that have none in `receiptsDir` yet:
 // ended ones (idle for an hour — a window closed before SessionEnd fired
-// leaves these behind) with at least one billed response. Agent SDK runs are
-// skipped: they don't load your hooks, so they never had a receipt to miss.
+// leaves these behind) with at least one billed response. Only sessions that
+// record how they were started (cli, claude-vscode, …) and weren't Agent SDK
+// runs: SDK runs don't load your hooks, so they never had a receipt to miss,
+// and transcripts without an entrypoint are scripted one-off runs.
 function receiptMissing(receiptsDir, projectDirName, opts) {
   const have = existsSync(receiptsDir) ? loadManifest(receiptsDir) : {};
   const cutoff = Date.now() - CATCH_UP_IDLE_MS;
@@ -213,7 +216,8 @@ function receiptMissing(receiptsDir, projectDirName, opts) {
   for (const s of listSessions()) {
     if (s.projectDirName.toLowerCase() !== projectDirName.toLowerCase()) continue;
     if (have[s.sessionId] || s.mtimeMs > cutoff) continue;
-    if (/^sdk/.test(peekField(s.file, 'entrypoint') ?? '')) continue;
+    const entrypoint = peekField(s.file, 'entrypoint');
+    if (!entrypoint || entrypoint.startsWith('sdk')) continue;
     if (!aggregate(parseSessionFile(s.file).records).assistantResponses) continue;
     written.push(writeReceipt(s, opts, { outDir: receiptsDir }));
   }

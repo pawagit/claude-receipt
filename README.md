@@ -103,7 +103,7 @@ other sessions are running in parallel.
 | `--project <dir>` | Latest session whose recorded `cwd` matches `<dir>` |
 | `--file <path>` | Receipt a specific transcript `.jsonl` |
 | `--hook` | Read a Claude Code hook payload on stdin (what the `SessionEnd` hook runs); also catches up missed sessions like `--missing` |
-| `--missing [dir]` | Receipt the project's sessions that have no receipt yet: idle for over an hour, at least one billed response, Agent SDK runs skipped |
+| `--missing [dir]` | Receipt the project's sessions that have no receipt yet: idle for over an hour, at least one billed response; Agent SDK runs and sessions that don't record how they were started are skipped |
 | `--list` | List discoverable sessions (date · project · title · id) |
 | `--out <dir>` | Output directory (default: the session's own `<project>/.claude-receipts`) |
 | `--no-subagents` | Exclude nested workflow/Task sub-agent token spend |
@@ -193,7 +193,9 @@ A session whose window is closed or reloaded before it ends never fires
 `SessionEnd`. So each time the hook runs, it also receipts the project's other
 sessions that have none yet and have been idle for over an hour (`--missing` does
 the same by hand). Sessions run through the Agent SDK are skipped: they don't load
-your hooks, so they never get a receipt automatically.
+your hooks, so they never get a receipt automatically. So are sessions whose
+transcript doesn't record how they were started (scripted one-off runs); receipt
+one of those with `--session <id>` if you want it.
 
 **2. On-demand — `/receipt` slash command** in `~/.claude/commands/receipt.md`:
 type `/receipt` in any conversation to generate the receipt for the current
