@@ -23,8 +23,10 @@ reads that file directly, so it needs no API key and works offline.
 ```
 
 The one subtlety it handles: a single assistant API response is written as **multiple
-JSONL lines** that each repeat the full `usage` object, so usage is deduped by
-`message.id` before summing (otherwise tokens are counted 3–4×).
+JSONL lines** that each repeat the `usage` object, so usage is deduped by
+`message.id` before summing (otherwise tokens are counted 3–4×). Sub-agent
+transcripts also write mid-stream snapshots of a response with only a few output
+tokens, so each response is counted from its final row.
 
 ## Install
 

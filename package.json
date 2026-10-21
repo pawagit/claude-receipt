@@ -28,7 +28,8 @@
   },
   "scripts": {
     "start": "node bin/receipt.js",
-    "setup": "node scripts/install.js"
+    "setup": "node scripts/install.js",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=20"

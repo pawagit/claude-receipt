@@ -1,9 +1,11 @@
 // Turning raw transcript records into a token/usage summary.
 //
 // THE CRITICAL STEP: a single assistant API response is written to the JSONL as
-// multiple lines (one per content block), and every line repeats the full
-// `usage` object. Summing raw rows multiplies the token count. We therefore
-// dedupe usage by message.id (falling back to requestId) and count it once.
+// multiple lines (one per content block), and every line repeats the `usage`
+// object. Summing raw rows multiplies the token count. We therefore dedupe usage
+// by message.id + requestId and count it once — from the row with the most
+// output tokens, because sub-agent transcripts also write mid-stream snapshots
+// (stop_reason null, a handful of output tokens) before the final row.
 
 import { tierFor } from './pricing.js';
 
@@ -34,7 +36,7 @@ function emptyModelBucket(model, tier) {
 // Aggregate one set of records (a main session, or a sub-agent transcript).
 export function aggregate(records) {
   const models = {};
-  const seenResponses = new Set(); // message.id|requestId -> dedupe usage
+  const responses = new Map(); // message.id|requestId -> { model, usage } of its final row
   const seenToolUseIds = new Set(); // tool_use block id -> dedupe tool calls
   let toolCalls = 0;
   let userPrompts = 0;
@@ -72,13 +74,17 @@ export function aggregate(records) {
       }
     }
 
-    // Usage: count once per unique API response, skip synthetic/system rows.
-    const key = `${msg.id || ''}|${rec.requestId || ''}`;
-    if (seenResponses.has(key)) continue;
-    seenResponses.add(key);
+    // Usage: one entry per API response (synthetic/system rows aren't billed),
+    // keeping the row with the most output tokens; ties go to the later row.
     if (SYNTHETIC(model) || !msg.usage) continue;
+    const key = msg.id || rec.requestId ? `${msg.id || ''}|${rec.requestId || ''}` : rec.uuid;
+    const prev = responses.get(key);
+    if (!prev || (msg.usage.output_tokens || 0) >= (prev.usage.output_tokens || 0)) {
+      responses.set(key, { model, usage: msg.usage });
+    }
+  }
 
-    const u = msg.usage;
+  for (const { model, usage: u } of responses.values()) {
     const tier = tierFor(model, u);
     const bucket = (models[bucketKey(model, tier)] ??= emptyModelBucket(model, tier));
     bucket.responses++;
@@ -106,7 +112,7 @@ export function aggregate(records) {
     models,
     toolCalls,
     userPrompts,
-    assistantResponses: seenResponses.size,
+    assistantResponses: responses.size,
     firstTs,
     lastTs,
   };
