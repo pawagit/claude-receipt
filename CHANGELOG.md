@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+**After updating:** run `node bin/receipt.js --rebuild --all` to re-price the
+receipts you already have — Claude Fable 5.2 sessions showed no price, and
+Claude Sonnet 5.5 cache reads were priced too high.
+
+### Fixed
+
+- **Claude Sonnet 5.5 cache reads cost twice the real price.** They were
+  priced at the standard 0.1x ($0.20 / MTok) instead of 0.05x ($0.10 / MTok).
+
+### Added
+
+- Prices for Claude Fable 5.2 and Claude Mythos 5.2 ($8 / $40 per MTok, cache
+  reads at 0.025x, fast mode $16 / $80).
+
 ## 1.1.0 — 2026-10-21
 
 **After updating:** run `npm run setup` once to refresh the slash commands, and

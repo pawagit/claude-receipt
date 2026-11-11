@@ -1,7 +1,7 @@
 // Estimating cost from token counts. The transcript stores tokens only — never
 // cost — so we apply a bundled price table. Cache rates derive from the input
-// price via Anthropic's multipliers, which a model may override (Opus 5.5 and
-// Fable 5.1 read cache cheaper than the standard 0.1x).
+// price via Anthropic's multipliers, which a model may override (Opus 5.5,
+// Sonnet 5.5 and Fable 5.1/5.2 read cache cheaper than the standard 0.1x).
 //
 // NOTE: on a Pro/Max subscription you don't pay per token; treat this as the
 // "estimated equivalent API cost".

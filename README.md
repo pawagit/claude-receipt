@@ -238,7 +238,7 @@ Manage or disable the hook anytime via `/hooks`.
 - Web searches are priced per request (`webSearchPer1000` in `models.json`); web fetches are free.
 - Cache pricing uses the standard multipliers (read 0.1×, 5-min write 1.25×, 1-hour write 2×),
   using the 5m/1h split from `usage.cache_creation` when present. A model row can override them
-  (`cacheMultipliers`: Opus 5.5 reads at 0.05×, Fable 5.1 at 0.025×).
+  (`cacheMultipliers`: Opus 5.5 and Sonnet 5.5 read at 0.05×, Fable/Mythos 5.1 and 5.2 at 0.025×).
 - Fast-mode responses (`usage.speed: "fast"`) are priced from the row's `fast` rates, and responses
   whose prompt exceeds a `longContext.above` threshold (Haiku 5.5: 100K) from its `longContext`
   rates; each gets its own line item (`claude-opus-5-5 · fast`).
